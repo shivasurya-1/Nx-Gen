@@ -51,8 +51,11 @@ class InstructorListView(APIView):
     permission_classes = [IsAdminUser]
 
     def get(self, request):
-
-        instructors = Instructor.objects.all().order_by("-created_at")
+        course_id = request.query_params.get('course_id')
+        if course_id:
+            instructors = Instructor.objects.filter(assigned_courses__id=course_id).distinct()
+        else:
+            instructors = Instructor.objects.all().order_by("-created_at")
 
         serializer = InstructorListSerializer(instructors, many=True)
 
@@ -193,4 +196,29 @@ class InstructorProfileView(APIView):
             serializer.save()
             return Response({"message": "Updated successfully"})
 
+        return Response(serializer.errors, status=400)
+
+
+# ── INSTRUCTOR DETAIL BY ID (Admin) ──────────────────────────────────────────
+class InstructorDetailByIdView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request, id):
+        try:
+            instructor = Instructor.objects.get(id=id)
+        except Instructor.DoesNotExist:
+            return Response({"error": "Instructor not found"}, status=404)
+        serializer = InstructorDetailSerializer(instructor)
+        return Response(serializer.data)
+
+    def patch(self, request, id):
+        try:
+            instructor = Instructor.objects.get(id=id)
+        except Instructor.DoesNotExist:
+            return Response({"error": "Instructor not found"}, status=404)
+
+        serializer = InstructorDetailSerializer(instructor, data=request.data, partial=True, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Instructor updated successfully"})
         return Response(serializer.errors, status=400)

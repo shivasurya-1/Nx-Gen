@@ -4,14 +4,17 @@ from .views import (
     DeactivateInstructorView,
     InstructorListView,
     InstructorCoursesView,
-    InstructorProfileView
-
+    InstructorProfileView,
+    InstructorDetailByIdView,
 )
 
 urlpatterns = [
 
     # 🔥 Register Instructor (Admin creates instructor)
     path('register/', InstructorRegisterView.as_view(), name='instructor-register'),
+
+    # 🔥 Get / Update single instructor by ID (admin)
+    path('<int:id>/', InstructorDetailByIdView.as_view(), name='instructor-detail'),
 
     # 🔥 Deactivate Instructor
     path('<int:id>/deactivate/', DeactivateInstructorView.as_view(), name='deactivate-instructor'),

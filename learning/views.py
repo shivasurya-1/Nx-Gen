@@ -42,12 +42,12 @@ class CourseProgressView(APIView):
     def get(self, request, course_id):
 
         total_lessons = Lesson.objects.filter(
-            module__section__course_id=course_id
+            module__course_id=course_id
         ).count()
 
         completed = LessonProgress.objects.filter(
             student=request.user,
-            lesson__module__section__course_id=course_id,
+            lesson__module__course_id=course_id,
             completed=True
         ).count()
 
@@ -90,7 +90,7 @@ class LessonDetailView(APIView):
 
         lesson = Lesson.objects.get(id=lesson_id)
 
-        course = lesson.module.section.course
+        course = lesson.module.course
 
         enrolled = Enrollment.objects.filter(
             student=request.user,
@@ -107,3 +107,16 @@ class LessonDetailView(APIView):
         serializer = LessonSerializer(lesson)
 
         return Response(serializer.data)
+class RecentProgressView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        recent = LessonProgress.objects.filter(student=request.user).order_by('-updated_at')[:5]
+        data = []
+        for p in recent:
+            data.append({
+                'lesson_title': p.lesson.title,
+                'course_title': p.lesson.module.course.title,
+                'completed': p.completed,
+                'updated_at': p.updated_at
+            })
+        return Response(data)

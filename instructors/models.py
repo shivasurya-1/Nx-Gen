@@ -24,13 +24,13 @@ class Instructor(models.Model):
     email = models.EmailField(unique=True)
 
     # 🔥 Employee Details
-    employee_id = models.CharField(max_length=50)
-    date_of_joining = models.DateField()
+    employee_id = models.CharField(max_length=50, blank=True, null=True)
+    date_of_joining = models.DateField(blank=True, null=True)
 
     assigned_courses = models.ManyToManyField(Course, blank=True, related_name='instructor_assigned_courses')
 
     # 🔥 Academic Info
-    qualification = models.CharField(max_length=200)
+    qualification = models.CharField(max_length=200, blank=True, null=True)
 
     EXPERIENCE_CHOICES = (
         ('Fresher', 'fresher'),
@@ -41,10 +41,10 @@ class Instructor(models.Model):
     experience = models.CharField(max_length=20, choices=EXPERIENCE_CHOICES)
 
     # 🔥 Bank Details
-    bank_account_number = models.CharField(max_length=50)
-    ifsc_code = models.CharField(max_length=20)
-    pan_number = models.CharField(max_length=20)
-    aadhaar_number = models.CharField(max_length=20)
+    bank_account_number = models.CharField(max_length=50, blank=True, null=True)
+    ifsc_code = models.CharField(max_length=20, blank=True, null=True)
+    pan_number = models.CharField(max_length=20, blank=True, null=True)
+    aadhaar_number = models.CharField(max_length=20, blank=True, null=True)
 
     # 🔥 Document Type Dropdown
     DOCUMENT_TYPE_CHOICES = (

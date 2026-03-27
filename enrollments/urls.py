@@ -5,12 +5,15 @@ from .views import (
     ApproveEnrollmentView,
     RejectEnrollmentView,
     CreateOrderView,
-    VerifyPaymentView
+    VerifyPaymentView,
+    StudentCoursesView,
+    StudentDashboardStatsView
 )
 
 urlpatterns = [
     path('enroll/', EnrollView.as_view()),
-
+    path('student/courses/', StudentCoursesView.as_view()),
+    path('student/dashboard-stats/', StudentDashboardStatsView.as_view()),
     path('admin/enrollments/', EnrollmentListView.as_view()),
     path('admin/enrollments/<int:id>/approve/', ApproveEnrollmentView.as_view()),
     path('admin/enrollments/<int:id>/reject/', RejectEnrollmentView.as_view()),

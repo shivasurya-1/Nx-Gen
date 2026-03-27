@@ -226,3 +226,38 @@ class VerifyPaymentView(APIView):
             return Response({
                 "error": "Payment verification failed"
             }, status=400)
+from rest_framework.permissions import IsAuthenticated
+from .serializers import StudentEnrolledCourseSerializer
+from learning.models import LessonProgress
+from courses.models import Batch
+
+class StudentCoursesView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        email = request.user.email
+        enrollments = Enrollment.objects.filter(email=email, status='approved', is_active=True)
+        serializer = StudentEnrolledCourseSerializer(enrollments, many=True, context={'request': request})
+        return Response(serializer.data)
+
+class StudentDashboardStatsView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        email = request.user.email
+        enrolled_count = Enrollment.objects.filter(email=email, status='approved', is_active=True).count()
+        completed_lessons = LessonProgress.objects.filter(student=request.user, completed=True).count()
+        
+        active_batches = Batch.objects.filter(students=request.user, is_live_class_active=True)
+        active_live_classes = []
+        for b in active_batches:
+            active_live_classes.append({
+                'course_title': b.course.title,
+                'batch_name': b.name,
+                'live_link': b.live_link
+            })
+            
+        return Response({
+            'enrolled_courses_count': enrolled_count,
+            'completed_lessons_count': completed_lessons,
+            'next_live_session': 'Saturday, 10:00 AM',
+            'active_live_classes': active_live_classes
+        })

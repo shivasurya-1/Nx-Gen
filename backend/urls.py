@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/blogs/', include('blog.urls')),
     path('api/enrollments/', include('enrollments.urls')),
     path('api/instructors/', include('instructors.urls')),
+    path('api/learning/', include('learning.urls')),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
  
 ]

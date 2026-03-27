@@ -26,8 +26,15 @@ from .views import (
     # Student / Instructor assignment overview
     StudentAssignmentListView,
     InstructorAssignmentListView,
+    InstructorStudentDetailView,
     # Section Types
     SectionTypeListView,
+    # Batches
+    BatchListCreateView,
+    BatchDetailView,
+    ManageBatchStudentsView,
+    InstructorBatchListView,
+    ManageLiveClassView,
 )
 
 urlpatterns = [
@@ -76,7 +83,16 @@ urlpatterns = [
     path('my-assignments/', StudentAssignmentListView.as_view()),
     # Instructor: list all assignments across their courses
     path('instructor-assignments/', InstructorAssignmentListView.as_view()),
+    path('student-assignments/<int:student_id>/', InstructorStudentDetailView.as_view()),
 
     # ── METADATA ──────────────────────────────────────────────────────────
     path('section-types/', SectionTypeListView.as_view()),
+
+    # ── BATCHES ───────────────────────────────────────────────────────────
+    path('batches/', BatchListCreateView.as_view()),
+    path('batches/<int:pk>/', BatchDetailView.as_view()),
+    path('batches/<int:pk>/manage_students/', ManageBatchStudentsView.as_view()),
+    path('batches/<int:pk>/live_class/', ManageLiveClassView.as_view()),
+    # Instructor Batches
+    path('my-batches/', InstructorBatchListView.as_view()),
 ]

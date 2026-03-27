@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'enrollments',
     'django_celery_results',
     'instructors',
+    'learning',
 ]
 
 MIDDLEWARE = [

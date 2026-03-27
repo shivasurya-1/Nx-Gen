@@ -118,3 +118,37 @@ class ChangePasswordView(APIView):
 #             return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 #         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+from .models import StudentProfile
+class StudentProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        try:
+            profile = request.user.student_profile
+            return Response({
+                'first_name': request.user.first_name,
+                'last_name': request.user.last_name,
+                'email': request.user.email,
+                'phone': profile.phone,
+                'location': profile.location,
+                'bio': profile.bio
+            })
+        except Exception:
+            return Response({
+                'first_name': request.user.first_name,
+                'last_name': request.user.last_name,
+                'email': request.user.email,
+                'phone': '',
+                'location': '',
+                'bio': ''
+            })
+    def patch(self, request):
+        user = request.user
+        user.first_name = request.data.get('first_name', user.first_name)
+        user.last_name = request.data.get('last_name', user.last_name)
+        user.save()
+        profile, created = StudentProfile.objects.get_or_create(user=user)
+        profile.phone = request.data.get('phone', profile.phone)
+        profile.location = request.data.get('location', profile.location)
+        profile.bio = request.data.get('bio', profile.bio)
+        profile.save()
+        return Response({'message': 'Profile updated successfully'})

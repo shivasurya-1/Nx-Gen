@@ -94,9 +94,12 @@ class InstructorListSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "full_name",
+            "email",
             "phone",
             "employee_id",
             "experience",
+            "qualification",
+            "date_of_joining",
             "is_active",
             "courses",
             "created_at"

@@ -129,3 +129,34 @@ class Submission(models.Model):
     def __str__(self):
         lesson_title = self.lesson.title if self.lesson else "No Lesson"
         return f"{self.student.email} - {lesson_title}"
+
+
+class Batch(models.Model):
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name="batches"
+    )
+    instructor = models.ForeignKey(
+        'instructors.Instructor',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="batches"
+    )
+    students = models.ManyToManyField(
+        User,
+        blank=True,
+        related_name="enrolled_batches"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    
+    # ðŸ”¥ Live Class Fields (Instructor can start a class)
+    live_link = models.URLField(blank=True, null=True, help_text="Teams or Zoom link for live class")
+    is_live_class_active = models.BooleanField(default=False, help_text="Is the live class currently ongoing?")
+
+    def __str__(self):
+        return f"{self.name} - {self.course.title}"

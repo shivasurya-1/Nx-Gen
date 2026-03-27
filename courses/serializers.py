@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Course, CourseContent, Module, Lesson, Submission
+from .models import Category, Course, CourseContent, Module, Lesson, Submission, Batch
 
 
 # ─────────────────────────────────────────────
@@ -118,3 +118,25 @@ class SubmissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Submission
         fields = "__all__"
+
+
+# ─────────────────────────────────────────────
+# BATCH
+# ─────────────────────────────────────────────
+class BatchSerializer(serializers.ModelSerializer):
+    students_detail = serializers.SerializerMethodField()
+    course_title = serializers.ReadOnlyField(source='course.title')
+
+    class Meta:
+        model = Batch
+        fields = "__all__"
+
+    def get_students_detail(self, obj):
+        return [
+            {
+                "id": s.id,
+                "name": f"{s.first_name} {s.last_name}".strip() or s.email,
+                "email": s.email,
+            }
+            for s in obj.students.all()
+        ]

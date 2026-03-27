@@ -4,7 +4,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny
 
 from accounts.permissions import IsStudent, IsInstructor
-from .models import Course, CourseContent, Category, Module, Lesson, Submission
+from .models import Course, CourseContent, Category, Module, Lesson, Submission, Batch
 from .serializers import (
     CourseSerializer,
     CourseContentSerializer,
@@ -14,6 +14,7 @@ from .serializers import (
     LessonSerializer,
     CourseContentDisplaySerializer,
     SubmissionSerializer,
+    BatchSerializer,
 )
 from .permissions import IsSuperAdmin, IsAssignedInstructorOrAdmin, CanEditCourseContent
 
@@ -684,7 +685,7 @@ class AssignmentStatusView(APIView):
 
         # Get all enrolled students via email match
         approved_emails = Enrollment.objects.filter(course=course, status='approved').values_list('email', flat=True)
-        enrolled_users = User.objects.filter(email__in=approved_emails)
+        enrolled_users = User.objects.filter(email__in=approved_emails).prefetch_related('enrolled_batches')
 
         # Get all submissions for this lesson
         submissions = Submission.objects.filter(lesson=lesson)
@@ -694,11 +695,17 @@ class AssignmentStatusView(APIView):
         response_data = []
         for user in enrolled_users:
             sub = submission_map.get(user.id)
+            
+            # Find batch for this student in this course
+            batch = user.enrolled_batches.filter(course=course, is_active=True).first()
+            batch_data = {"id": batch.id, "name": batch.name} if batch else None
+
             if sub:
                 response_data.append({
                     "student_id": user.id,
                     "student_name": f"{user.first_name} {user.last_name}".strip() or user.email,
                     "student_email": user.email,
+                    "batch": batch_data,
                     "status": "Submitted",
                     "submitted_at": sub.submitted_at,
                     "submission_data": SubmissionSerializer(sub).data
@@ -708,12 +715,62 @@ class AssignmentStatusView(APIView):
                     "student_id": user.id,
                     "student_name": f"{user.first_name} {user.last_name}".strip() or user.email,
                     "student_email": user.email,
+                    "batch": batch_data,
                     "status": "Not Submitted",
                     "submitted_at": None,
                     "submission_data": None
                 })
 
         return Response(response_data, status=200)
+
+class InstructorStudentDetailView(APIView):
+    """
+    GET /student-assignments/<student_id>/
+    Returns list of assignments for a specific student across their enrolled courses, 
+    with submission status. Useful for instructor detail view.
+    """
+    def get_permissions(self):
+        from accounts.permissions import IsInstructor
+        return [IsInstructor()]
+
+    def get(self, request, student_id):
+        from django.contrib.auth import get_user_model
+        from enrollments.models import Enrollment
+        from .models import Lesson, Submission
+        
+        User = get_user_model()
+        try:
+            student = User.objects.get(id=student_id)
+        except User.DoesNotExist:
+            return Response({"error": "Student not found"}, status=404)
+
+        # Get courses this student is enrolled in
+        enrolled_course_ids = Enrollment.objects.filter(
+            email=student.email,
+            status='approved'
+        ).values_list('course_id', flat=True)
+
+        lessons = Lesson.objects.filter(
+            module__course__id__in=enrolled_course_ids
+        ).exclude(assignment_title="").select_related('module__course')
+
+        data = []
+        for lesson in lessons:
+            submission = Submission.objects.filter(
+                lesson=lesson, student=student
+            ).first()
+            data.append({
+                "assignment": LessonSerializer(lesson).data,
+                "course": {
+                    "id": lesson.module.course.id,
+                    "title": lesson.module.course.title,
+                },
+                "status": "Submitted" if submission else "Not Submitted",
+                "submitted_at": submission.submitted_at if submission else None,
+                "submission_data": SubmissionSerializer(submission).data if submission else None
+            })
+
+        return Response(data)
 
 
 class AssignmentDetailView(APIView):
@@ -856,3 +913,211 @@ class InstructorAssignmentListView(APIView):
             })
 
         return Response(data)
+
+
+# ════════════════════════════════════════════════════════════
+# BATCHES
+# ════════════════════════════════════════════════════════════
+
+class BatchListCreateView(APIView):
+    def get_permissions(self):
+        # IsSuperAdmin is already imported from courses.permissions at top of this file
+        if self.request.method == "POST":
+            return [IsSuperAdmin()]
+        # GET is open to authenticated users; filtering happens in get()
+        from rest_framework.permissions import IsAuthenticated
+        return [IsAuthenticated()]
+
+    def get(self, request):
+        batches = Batch.objects.filter(is_active=True).order_by('-created_at')
+        if request.user.is_authenticated:
+            if getattr(request.user, 'role', '') == 'instructor' and not request.user.is_superuser:
+                if hasattr(request.user, 'instructor'):
+                    batches = batches.filter(instructor=request.user.instructor)
+                else:
+                    batches = batches.none()
+        else:
+            batches = batches.none() # Return nothing for unauthenticated
+
+        serializer = BatchSerializer(batches, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = BatchSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class BatchDetailView(APIView):
+    def get_permissions(self):
+        return [IsSuperAdmin()]
+
+    def get(self, request, pk):
+        try:
+            batch = Batch.objects.get(pk=pk)
+            serializer = BatchSerializer(batch)
+            return Response(serializer.data)
+        except Batch.DoesNotExist:
+            return Response({"error": "Batch not found"}, status=404)
+
+    def put(self, request, pk):
+        try:
+            batch = Batch.objects.get(pk=pk)
+        except Batch.DoesNotExist:
+            return Response({"error": "Batch not found"}, status=404)
+
+        serializer = BatchSerializer(batch, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=400)
+
+    def patch(self, request, pk):
+        return self.put(request, pk)
+
+    def delete(self, request, pk):
+        try:
+            batch = Batch.objects.get(pk=pk)
+            batch.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Batch.DoesNotExist:
+            return Response({"error": "Batch not found"}, status=404)
+
+class ManageBatchStudentsView(APIView):
+    def get_permissions(self):
+        return [IsSuperAdmin()]
+
+    def post(self, request, pk):
+        try:
+            batch = Batch.objects.get(pk=pk)
+        except Batch.DoesNotExist:
+            return Response({"error": "Batch not found"}, status=404)
+        
+        student_emails = request.data.get('student_emails', [])
+        action = request.data.get('action', 'add')
+
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        students = User.objects.filter(email__in=student_emails)
+
+        if action == 'add':
+            batch.students.add(*students)
+        elif action == 'remove':
+            batch.students.remove(*students)
+            
+        return Response({"message": "Batch students updated successfully."})
+
+class InstructorBatchListView(APIView):
+    def get_permissions(self):
+        from accounts.permissions import IsInstructor
+        return [IsInstructor()]
+
+    def get(self, request):
+        if hasattr(request.user, 'instructor'):
+            batches = request.user.instructor.batches.filter(is_active=True).prefetch_related('students', 'course')
+            
+            data = []
+            for batch in batches:
+                data.append({
+                    "id": batch.id,
+                    "name": batch.name,
+                    "course_id": batch.course.id,
+                    "course_title": batch.course.title,
+                    "live_link": batch.live_link,
+                    "is_live_class_active": batch.is_live_class_active,
+                    "students": [
+                        {
+                            "id": student.id,
+                            "name": f"{student.first_name} {student.last_name}".strip() or student.email,
+                            "email": student.email,
+                            "phone": getattr(student, 'phone', None)
+                        } for student in batch.students.all()
+                    ]
+                })
+            return Response(data)
+        return Response({"error": "Instructor profile not found."}, status=403)
+
+
+class InstructorStudentDetailView(APIView):
+    def get_permissions(self):
+        from accounts.permissions import IsInstructor
+        return [IsInstructor()]
+
+    def get(self, request, student_id):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        try:
+            student = User.objects.get(id=student_id)
+        except User.DoesNotExist:
+            return Response({"error": "Student not found"}, status=404)
+
+        # Get all submissons for this student
+        submissions = Submission.objects.filter(user=student).select_related('lesson', 'lesson__module', 'lesson__module__course')
+        
+        data = []
+        for sub in submissions:
+            # Safely get titles
+            lesson = sub.lesson
+            module = lesson.module if lesson else None
+            course = module.course if module else None
+            
+            data.append({
+                "id": sub.id,
+                "status": sub.status,
+                "submitted_at": sub.submitted_at,
+                "submission_data": sub.submission_data,
+                "lesson": {
+                    "id": lesson.id if lesson else None,
+                    "title": lesson.title if lesson else "Unknown Lesson"
+                },
+                "module": {
+                    "id": module.id if module else None,
+                    "title": module.title if module else "Unknown Module"
+                },
+                "course": {
+                    "id": course.id if course else None,
+                    "title": course.title if course else "Unknown Course"
+                },
+                "assignment": {
+                    "id": lesson.id if lesson else None,
+                    "assignment_title": getattr(lesson, 'assignment_title', lesson.title if lesson else "No Subject"),
+                }
+            })
+        return Response(data)
+
+
+class ManageLiveClassView(APIView):
+    def get_permissions(self):
+        from rest_framework.permissions import IsAuthenticated
+        return [IsAuthenticated()]
+
+    def post(self, request, pk):
+        try:
+            batch = Batch.objects.get(pk=pk)
+        except Batch.DoesNotExist:
+            return Response({'error': 'Batch not found'}, status=404)
+
+        if request.user.role == 'instructor':
+            if not hasattr(request.user, 'instructor') or batch.instructor != request.user.instructor:
+                return Response({'error': 'Not assigned to this batch'}, status=403)
+        elif request.user.role != 'admin' and not request.user.is_superuser:
+            return Response({'error': 'Permission denied'}, status=403)
+
+        action = request.data.get('action')
+        if action == 'start':
+            link = request.data.get('live_link')
+            if not link:
+                return Response({'error': 'Meeting link is required'}, status=400)
+            batch.live_link = link
+            batch.is_live_class_active = True
+            batch.save()
+            return Response({'message': 'Live class started', 'live_link': batch.live_link})
+        elif action == 'end':
+            batch.is_live_class_active = False
+            batch.live_link = ''
+            batch.save()
+            return Response({'message': 'Live class ended'})
+
+        return Response({'error': 'Invalid action'}, status=400)
+
