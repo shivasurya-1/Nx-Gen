@@ -146,3 +146,77 @@ class LoginSerializer(serializers.Serializer):
 #             "refresh": str(refresh),
 #             "access": str(refresh.access_token),
 #         }
+
+
+class ForgotPasswordRequestSerializer(serializers.Serializer):
+    """Serializer for requesting password reset (email input)"""
+    email = serializers.EmailField(required=True)
+
+    def validate_email(self, value):
+        user = User.objects.filter(email=value).first()
+        if not user:
+            raise serializers.ValidationError("User with this email does not exist")
+        return value
+
+
+class ForgotPasswordVerifyOTPSerializer(serializers.Serializer):
+    """Serializer for verifying OTP"""
+    email = serializers.EmailField(required=True)
+    otp = serializers.CharField(max_length=6, required=True)
+
+    def validate(self, data):
+        email = data.get('email')
+        otp = data.get('otp')
+
+        user = User.objects.filter(email=email).first()
+        if not user:
+            raise serializers.ValidationError("User not found")
+
+        # Check if password reset token exists and OTP is valid
+        try:
+            reset_token = user.password_reset
+        except:
+            raise serializers.ValidationError("No password reset request found. Please request password reset first.")
+
+        if not reset_token.is_otp_valid(otp):
+            raise serializers.ValidationError("Invalid or expired OTP")
+
+        return data
+
+
+class ForgotPasswordResetSerializer(serializers.Serializer):
+    """Serializer for resetting password"""
+    email = serializers.EmailField(required=True)
+    otp = serializers.CharField(max_length=6, required=True)
+    new_password = serializers.CharField(write_only=True, required=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True, required=True)
+
+    def validate(self, data):
+        email = data.get('email')
+        otp = data.get('otp')
+        new_password = data.get('new_password')
+        confirm_password = data.get('confirm_password')
+
+        # Verify user exists
+        user = User.objects.filter(email=email).first()
+        if not user:
+            raise serializers.ValidationError("User not found")
+
+        # Verify OTP
+        try:
+            reset_token = user.password_reset
+        except:
+            raise serializers.ValidationError("No password reset request found")
+
+        if not reset_token.is_otp_valid(otp):
+            raise serializers.ValidationError("Invalid or expired OTP")
+
+        # Verify passwords match
+        if new_password != confirm_password:
+            raise serializers.ValidationError("Passwords do not match")
+
+        # Validate password strength
+        if len(new_password) < 8:
+            raise serializers.ValidationError("Password must be at least 8 characters")
+
+        return data

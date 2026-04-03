@@ -1,5 +1,7 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+import uuid
+from django.utils import timezone
 
 class User(AbstractUser):
     ROLE_CHOICES = (
@@ -21,3 +23,22 @@ class StudentProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username}'s Profile"
+
+
+class PasswordResetToken(models.Model):
+    """Model to store OTP and reset tokens for password reset flow"""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='password_reset')
+    otp = models.CharField(max_length=6)
+    reset_token = models.CharField(max_length=255, unique=True)
+    is_verified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"Reset token for {self.user.email}"
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def is_otp_valid(self, otp):
+        return self.otp == otp and not self.is_expired()

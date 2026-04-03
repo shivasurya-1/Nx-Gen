@@ -34,6 +34,7 @@ class ModuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Module
         fields = "__all__"
+        read_only_fields = ("created_by", "created_at", "updated_at")
 
 
 # ─────────────────────────────────────────────
@@ -43,6 +44,7 @@ class ModuleWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Module
         fields = "__all__"
+        read_only_fields = ("created_by", "created_at", "updated_at")
 
 
 # ─────────────────────────────────────────────

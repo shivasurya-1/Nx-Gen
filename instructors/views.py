@@ -28,18 +28,33 @@ class InstructorRegisterView(APIView):
     permission_classes = [IsAdminUser]
 
     def post(self, request):
-
         serializer = InstructorCreateSerializer(data=request.data)
 
-        if serializer.is_valid():
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
             instructor = serializer.save()
 
-            return Response({
-                "message": "Instructor created & credentials sent",
-                "id": instructor.id
-            }, status=201)
+            # Send credentials email asynchronously
+            try:
+                send_instructor_credentials_email_task.delay(instructor.id)
+            except Exception as e:
+                # Log error but don't fail the request
+                print(f"Failed to send instructor credentials email: {str(e)}")
 
-        return Response(serializer.errors, status=400)
+            return Response({
+                "message": "Instructor created successfully. Credentials have been sent to their email.",
+                "id": instructor.id,
+                "email": instructor.email,
+                "full_name": instructor.full_name
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response(
+                {"error": "Failed to create instructor", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 from .models import Instructor

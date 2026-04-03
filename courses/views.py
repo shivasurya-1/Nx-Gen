@@ -16,7 +16,7 @@ from .serializers import (
     SubmissionSerializer,
     BatchSerializer,
 )
-from .permissions import IsSuperAdmin, IsAssignedInstructorOrAdmin, CanEditCourseContent
+from .permissions import IsSuperAdmin, IsAssignedInstructorOrAdmin, CanEditCourseContent, IsModuleCreator
 
 
 # ════════════════════════════════════════════════════════════
@@ -350,6 +350,15 @@ class ModuleListCreateView(APIView):
 
         section_type = request.query_params.get("section_type")
         modules = Module.objects.filter(course=course).order_by('order')
+
+        # Instructors should only see modules they created.
+        # Admins keep full visibility.
+        if request.user.is_authenticated and not request.user.is_superuser:
+            if hasattr(request.user, 'instructor'):
+                modules = modules.filter(created_by=request.user.instructor)
+            else:
+                modules = modules.none()
+
         if section_type:
             modules = modules.filter(section_type=section_type)
         
@@ -373,8 +382,11 @@ class ModuleListCreateView(APIView):
 
         serializer = ModuleWriteSerializer(data=data)
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=201)
+            if request.user.is_authenticated and hasattr(request.user, 'instructor'):
+                module = serializer.save(created_by=request.user.instructor)
+            else:
+                module = serializer.save()
+            return Response(ModuleSerializer(module).data, status=201)
         return Response(serializer.errors, status=400)
 
 
@@ -386,7 +398,7 @@ class ModuleDetailView(APIView):
     """
     def get_permissions(self):
         if self.request.method in ["PUT", "PATCH", "DELETE"]:
-            return [CanEditCourseContent()]
+            return [IsModuleCreator()]
         return [AllowAny()]
 
     def get(self, request, course_id, pk):
@@ -403,9 +415,9 @@ class ModuleDetailView(APIView):
         except Module.DoesNotExist:
             return Response({"error": "Module not found in this course"}, status=404)
 
-        permission = CanEditCourseContent()
+        permission = IsModuleCreator()
         if not permission.has_object_permission(request, self, module):
-            return Response({"error": "You don't have permission to edit this module"}, status=403)
+            return Response({"error": "You can only edit modules you created"}, status=403)
 
         serializer = ModuleWriteSerializer(module, data=request.data, partial=True)
         if serializer.is_valid():
@@ -422,9 +434,9 @@ class ModuleDetailView(APIView):
         except Module.DoesNotExist:
             return Response({"error": "Module not found in this course"}, status=404)
 
-        permission = CanEditCourseContent()
+        permission = IsModuleCreator()
         if not permission.has_object_permission(request, self, module):
-            return Response({"error": "You don't have permission to delete this module"}, status=403)
+            return Response({"error": "You can only delete modules you created"}, status=403)
 
         module.delete()
         return Response({"message": "Module deleted"}, status=204)

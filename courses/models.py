@@ -48,6 +48,7 @@ class Module(models.Model):
     """
     A module belongs directly to a Course and is categorised
     into one of two sections: Training or Industry Readiness.
+    Each module is created by a specific instructor.
     """
     SECTION_TYPES = (
         ("training", "Training"),
@@ -59,6 +60,14 @@ class Module(models.Model):
         on_delete=models.CASCADE,
         related_name="modules"
     )
+    # ✅ Track which instructor created this module
+    created_by = models.ForeignKey(
+        'instructors.Instructor',
+        on_delete=models.CASCADE,
+        related_name="created_modules",
+        null=True,
+        blank=True
+    )
     section_type = models.CharField(
         max_length=50,
         choices=SECTION_TYPES,
@@ -66,12 +75,17 @@ class Module(models.Model):
     )
     title = models.CharField(max_length=255)
     order = models.IntegerField(default=0)
+    
+    # ✅ Audit timestamps
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['order']
 
     def __str__(self):
-        return f"[{self.get_section_type_display()}] {self.title}"
+        creator = f" (by {self.created_by.full_name})" if self.created_by else ""
+        return f"[{self.get_section_type_display()}] {self.title}{creator}"
 
 
 class Lesson(models.Model):

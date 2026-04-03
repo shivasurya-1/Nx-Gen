@@ -34,25 +34,29 @@ class EnrollView(APIView):
         serializer = EnrollmentSerializer(data=request.data)
 
         if serializer.is_valid():
-            enrollment = serializer.save()
+            try:
+                enrollment = serializer.save()
 
-            # 🔥 EMAIL TO ADMIN (YOUR EXISTING LOGIC)
-            
+                # 🔥 EMAIL TO ADMIN (YOUR EXISTING LOGIC)
+                send_admin_enrollment_email.delay(
+                    enrollment.name,
+                    enrollment.email,
+                    enrollment.course.title,
+                    enrollment.phone
+                )
 
-            send_admin_enrollment_email.delay(
-    enrollment.name,
-    enrollment.email,
-    enrollment.course.title,
-    enrollment.phone
-)
+                return Response({
+                    "message": "Enrollment successful",
+                    "enrollment_id": enrollment.id,
+                    "redirect": "payment"
+                }, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                return Response(
+                    {"error": "Failed to create enrollment", "details": str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
-            return Response({
-                "message": "Enrollment successful",
-                "enrollment_id": enrollment.id,
-                "redirect": "payment"
-            })
-
-        return Response(serializer.errors, status=400)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
    
 
@@ -74,85 +78,104 @@ class ApproveEnrollmentView(APIView):
         try:
             enrollment = Enrollment.objects.get(id=id)
         except Enrollment.DoesNotExist:
-            return Response({"error": "Not found"}, status=404)
+            return Response({"error": "Enrollment not found"}, status=status.HTTP_404_NOT_FOUND)
 
         # ✅ Already approved check
         if enrollment.status == "approved":
-            return Response({"message": "Already approved"}, status=400)
+            return Response({"message": "Already approved"}, status=status.HTTP_200_OK)
 
-        # ✅ FIX: reuse existing user
-        user = User.objects.filter(email=enrollment.email).first()
+        try:
+            # ✅ FIX: reuse existing user
+            user = User.objects.filter(email=enrollment.email).first()
 
-        if not user:
-            # 🔥 Generate username
-            username = enrollment.email.split("@")[0]
+            if not user:
+                # 🔥 Generate username
+                username = enrollment.email.split("@")[0]
 
-            # Avoid duplicate username
-            if User.objects.filter(username=username).exists():
-                username = username + str(random.randint(10, 99))
+                # Avoid duplicate username
+                if User.objects.filter(username=username).exists():
+                    username = username + str(random.randint(10, 99))
 
-            # 🔥 Generate password
-            password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+                # 🔥 Generate password
+                password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
 
-            # 🔥 Create user
-            user = User.objects.create_user(
-                username=username,
-                email=enrollment.email,
-                password=password,
-                role="student"
+                # 🔥 Create user
+                user = User.objects.create_user(
+                    username=username,
+                    email=enrollment.email,
+                    password=password,
+                    role="student"
+                )
+
+                user.is_active = True
+                user.save()
+
+                send_password = password  # only for new user
+
+            else:
+                # 🔥 Existing user → no new password
+                send_password = "Use your existing password"
+
+            # 🔥 Update enrollment
+            enrollment.status = "approved"
+            enrollment.is_active = True
+            enrollment.save()
+
+            # 🔥 EMAIL TO STUDENT
+            send_student_approval_email.delay(
+                enrollment.name,
+                user.username,
+                send_password,
+                enrollment.course.title,
+                enrollment.email
             )
 
-            user.is_active = True
-            user.save()
-
-            send_password = password  # only for new user
-
-        else:
-            # 🔥 Existing user → no new password
-            send_password = "Use your existing password"
-
-        # 🔥 Update enrollment
-        enrollment.status = "approved"
-        enrollment.is_active = True
-        enrollment.save()
-
-        # 🔥 EMAIL TO STUDENT
-        
-
-        send_student_approval_email.delay(
-    enrollment.name,
-    user.username,
-    send_password,
-    enrollment.course.title,
-    enrollment.email
-)
-
-        return Response({"message": "Approved + email sent"})
+            return Response(
+                {"message": "Enrollment approved successfully. Confirmation email sent to student."},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"error": "Failed to approve enrollment", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ---------------- REJECT ---------------- #
 
 class RejectEnrollmentView(APIView):
+    permission_classes = [IsAdminOnly]
 
     def post(self, request, id):
         try:
             enrollment = Enrollment.objects.get(id=id)
         except Enrollment.DoesNotExist:
-            return Response({"error": "Not found"}, status=404)
+            return Response({"error": "Enrollment not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        enrollment.status = "rejected"
-        enrollment.save()
+        try:
+            # ✅ Check if already rejected
+            if enrollment.status == "rejected":
+                return Response({"message": "Already rejected"}, status=status.HTTP_200_OK)
 
-        # 🔥 EMAIL TO STUDENT
-        
+            enrollment.status = "rejected"
+            enrollment.save()
 
-        send_student_rejection_email.delay(
-    enrollment.name,
-    enrollment.course.title,
-    enrollment.email
-)
+            # 🔥 EMAIL TO STUDENT
+            send_student_rejection_email.delay(
+                enrollment.name,
+                enrollment.course.title,
+                enrollment.email
+            )
 
-        return Response({"message": "Enrollment rejected"})
+            return Response(
+                {"message": "Enrollment rejected successfully. Student has been notified."},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"error": "Failed to reject enrollment", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 

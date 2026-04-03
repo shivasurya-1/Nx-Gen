@@ -37,7 +37,7 @@ class IsAssignedInstructorOrAdmin(BasePermission):
             return True
 
         # Instructors can access their assigned courses
-        if request.user.role == 'instructor':
+        if hasattr(request.user, 'instructor'):
             return True
 
         return False
@@ -51,9 +51,7 @@ class IsAssignedInstructorOrAdmin(BasePermission):
             return True
 
         # Instructors can only access courses assigned to them
-        if request.user.role == 'instructor':
-            if not hasattr(request.user, 'instructor'):
-                return False
+        if hasattr(request.user, 'instructor'):
             return request.user.instructor.assigned_courses.filter(id=obj.id).exists()
 
         return False
@@ -73,10 +71,7 @@ class CanEditCourseContent(BasePermission):
             return True
 
         # Instructors can only edit courses assigned to them
-        if request.user.role == 'instructor':
-            if not hasattr(request.user, 'instructor'):
-                return False
-                
+        if hasattr(request.user, 'instructor'):
             course_id = None
             if hasattr(obj, 'course'):
                 course_id = obj.course.id
@@ -90,5 +85,29 @@ class CanEditCourseContent(BasePermission):
                 return False
                 
             return request.user.instructor.assigned_courses.filter(id=course_id).exists()
+
+        return False
+
+
+class IsModuleCreator(BasePermission):
+    """
+    Allows only the instructor who created the module to edit/delete it.
+    Admins can manage any module.
+    
+    This ensures modules are instructor-specific and not shared across
+    different instructors assigned to the same course.
+    """
+    def has_object_permission(self, request, view, obj):
+        if not request.user.is_authenticated:
+            return False
+
+        # Admins can edit/delete any module
+        if request.user.is_superuser:
+            return True
+
+        # Instructors can only edit/delete modules they created
+        if hasattr(request.user, 'instructor'):
+            # Check if the current instructor is the creator of this module
+            return obj.created_by == request.user.instructor
 
         return False
