@@ -10,23 +10,28 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 from corsheaders.defaults import default_headers
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from a .env file located at BASE_DIR
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-1%6x%xl!+vk@08^=)tmrjl2vk8wf8r8m+u*k2wx0mitmfl#n^('
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-1%6x%xl!+vk@08^=)tmrjl2vk8wf8r8m+u*k2wx0mitmfl#n^(')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DJANGO_DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', '*').split(',')
 
 AUTH_USER_MODEL = 'accounts.User'
 
@@ -146,20 +151,21 @@ EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.gmail.com"
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = "vanumushashidhar@gmail.com"
-EMAIL_HOST_PASSWORD = "onsnskjgqnhmlwgb"
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': 'dmxfdt7ub',
-    'API_KEY': '851955595864625',
-    'API_SECRET': '7jPJ065tTk7x-una-rI3AAas-0Y'
+    'CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME', ''),
+    'API_KEY': os.getenv('CLOUDINARY_API_KEY', ''),
+    'API_SECRET': os.getenv('CLOUDINARY_API_SECRET', '')
 }
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
@@ -176,5 +182,5 @@ CELERY_TASK_SERIALIZER = 'json'
 
 
 
-KEY_ID = "rzp_test_xxxxx"
-KEY_SECRET = "xxxxx"
+KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
+KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', '')
