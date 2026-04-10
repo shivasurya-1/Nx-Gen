@@ -1057,43 +1057,52 @@ class InstructorStudentDetailView(APIView):
         return [IsInstructor()]
 
     def get(self, request, student_id):
+        from enrollments.models import Enrollment
         from django.contrib.auth import get_user_model
+        from .models import Lesson, Submission
+        from .serializers import LessonSerializer, SubmissionSerializer
+
         User = get_user_model()
         try:
             student = User.objects.get(id=student_id)
         except User.DoesNotExist:
             return Response({"error": "Student not found"}, status=404)
 
-        # Get all submissons for this student
-        submissions = Submission.objects.filter(user=student).select_related('lesson', 'lesson__module', 'lesson__module__course')
-        
+        if not hasattr(request.user, "instructor"):
+            return Response({"error": "Instructor profile not found."}, status=403)
+
+        instructor_course_ids = request.user.instructor.assigned_courses.values_list("id", flat=True)
+
+        enrolled_course_ids = Enrollment.objects.filter(
+            email=student.email,
+            status='approved',
+            course_id__in=instructor_course_ids
+        ).values_list('course_id', flat=True)
+
+        lessons = Lesson.objects.filter(
+            module__course__id__in=enrolled_course_ids
+        ).exclude(assignment_title="").select_related('module__course')
+
         data = []
-        for sub in submissions:
-            # Safely get titles
-            lesson = sub.lesson
-            module = lesson.module if lesson else None
-            course = module.course if module else None
-            
+        for lesson in lessons:
+            submission = Submission.objects.filter(lesson=lesson, student=student).first()
             data.append({
-                "id": sub.id,
-                "status": sub.status,
-                "submitted_at": sub.submitted_at,
-                "submission_data": sub.submission_data,
-                "lesson": {
-                    "id": lesson.id if lesson else None,
-                    "title": lesson.title if lesson else "Unknown Lesson"
-                },
+                "id": submission.id if submission else lesson.id,
+                "status": "Submitted" if submission else "Not Submitted",
+                "submitted_at": submission.submitted_at if submission else None,
+                "submission_data": SubmissionSerializer(submission).data if submission else None,
                 "module": {
-                    "id": module.id if module else None,
-                    "title": module.title if module else "Unknown Module"
+                    "id": lesson.module.id,
+                    "title": lesson.module.title
                 },
                 "course": {
-                    "id": course.id if course else None,
-                    "title": course.title if course else "Unknown Course"
+                    "id": lesson.module.course.id,
+                    "title": lesson.module.course.title
                 },
                 "assignment": {
-                    "id": lesson.id if lesson else None,
-                    "assignment_title": getattr(lesson, 'assignment_title', lesson.title if lesson else "No Subject"),
+                    "id": lesson.id,
+                    "assignment_title": lesson.assignment_title,
+                    "title": lesson.title,
                 }
             })
         return Response(data)

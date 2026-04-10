@@ -3,9 +3,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 
 
-@shared_task
-def send_instructor_credentials_email_task(email, name, username, password):
-
+def send_instructor_credentials_email_sync(email, name, username, password):
     subject = "Your Instructor Account is Created 🎉"
 
     message = f"""
@@ -25,7 +23,7 @@ Regards,
 Team Nxgen
 """
 
-    send_mail(
+    return send_mail(
         subject,
         message,
         settings.EMAIL_HOST_USER,
@@ -33,4 +31,7 @@ Team Nxgen
         fail_silently=False,
     )
 
-    return "Email sent successfully"
+
+@shared_task
+def send_instructor_credentials_email_task(email, name, username, password):
+    return send_instructor_credentials_email_sync(email, name, username, password)

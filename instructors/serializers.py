@@ -35,6 +35,11 @@ class InstructorCreateSerializer(serializers.ModelSerializer):
             "email"
         ]
 
+    def validate_bank_account_number(self, value):
+        if value and len(value) > 20:
+            raise serializers.ValidationError("Bank account number must not exceed 20 characters.")
+        return value
+
     def create(self, validated_data):
         courses = validated_data.pop("assigned_courses", [])
         email = validated_data["email"]
@@ -73,14 +78,9 @@ class InstructorCreateSerializer(serializers.ModelSerializer):
 
         instructor.assigned_courses.set(courses)
 
-        from .tasks import send_instructor_credentials_email_task
-
-        send_instructor_credentials_email_task.delay(
-            email,
-            validated_data["full_name"],
-            user.username,
-            password
-        )
+        # Keep the generated password on the instance so the view can send email
+        # after the DB transaction succeeds.
+        instructor._generated_password = password
 
         return instructor
 
@@ -136,4 +136,12 @@ class InstructorDetailSerializer(serializers.ModelSerializer):
                 if field in validated_data:
                     validated_data.pop(field)
 
-        return super().update(instance, validated_data)
+        instructor = super().update(instance, validated_data)
+
+        # Keep auth user active state in sync with instructor record.
+        if "is_active" in validated_data and instructor.user:
+            user = instructor.user
+            user.is_active = instructor.is_active
+            user.save(update_fields=["is_active"])
+
+        return instructor

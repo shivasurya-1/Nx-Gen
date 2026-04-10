@@ -66,12 +66,12 @@ class ChangePasswordView(APIView):
 
         user = request.user
 
-        current_password = request.data.get("current_password")
+        current_password = request.data.get("current_password") or request.data.get("old_password")
         new_password = request.data.get("new_password")
         confirm_password = request.data.get("confirm_password")
 
         if not current_password or not new_password or not confirm_password:
-            return Response({"error": "All fields are required"}, status=400)
+            return Response({"error": "All credentials are required"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not user.check_password(current_password):
             return Response({"error": "Current password is incorrect"}, status=400)
@@ -94,7 +94,7 @@ class ChangePasswordView(APIView):
 
         return Response({
             "message": "Password changed successfully"
-        }, status=200)
+        }, status=status.HTTP_200_OK)
 
 # class StudentLoginView(APIView):
 #     def post(self, request):

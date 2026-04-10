@@ -22,12 +22,10 @@ def send_email_task(self, subject, message, recipients):
 
 
 # 🔥 ADMIN NOTIFICATION (ENROLLMENT)
-@shared_task(bind=True, max_retries=3)
-def send_admin_enrollment_email(self, name, email, course, phone):
-    try:
-        send_mail(
-            subject="New Enrollment Request",
-            message=f"""
+def send_admin_enrollment_email_sync(name, email, course, phone):
+    return send_mail(
+        subject="New Enrollment Request",
+        message=f"""
 New student enrolled:
 
 Name: {name}
@@ -35,10 +33,16 @@ Email: {email}
 Course: {course}
 Phone: {phone}
             """,
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[settings.EMAIL_HOST_USER],
-            fail_silently=False,
-        )
+        from_email=settings.EMAIL_HOST_USER,
+        recipient_list=[settings.EMAIL_HOST_USER],
+        fail_silently=False,
+    )
+
+
+@shared_task(bind=True, max_retries=3)
+def send_admin_enrollment_email(self, name, email, course, phone):
+    try:
+        send_admin_enrollment_email_sync(name, email, course, phone)
         return "Admin notified"
 
     except Exception as e:
@@ -69,12 +73,10 @@ Course: {course}
 
 
 # 🔥 STUDENT APPROVAL EMAIL
-@shared_task(bind=True, max_retries=3)
-def send_student_approval_email(self, name, username, password, course, email):
-    try:
-        send_mail(
-            subject="Enrollment Approved 🎉",
-            message=f"""
+def send_student_approval_email_sync(name, username, password, course, email):
+    return send_mail(
+        subject="Enrollment Approved 🎉",
+        message=f"""
 Hi {name},
 
 Your enrollment is approved.
@@ -85,10 +87,16 @@ Password: {password}
 
 Course: {course}
             """,
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[email],
-            fail_silently=False,
-        )
+        from_email=settings.EMAIL_HOST_USER,
+        recipient_list=[email],
+        fail_silently=False,
+    )
+
+
+@shared_task(bind=True, max_retries=3)
+def send_student_approval_email(self, name, username, password, course, email):
+    try:
+        send_student_approval_email_sync(name, username, password, course, email)
         return "Student notified"
 
     except Exception as e:
@@ -96,22 +104,26 @@ Course: {course}
 
 
 # 🔥 STUDENT REJECTION EMAIL
-@shared_task(bind=True, max_retries=3)
-def send_student_rejection_email(self, name, course, email):
-    try:
-        send_mail(
-            subject="Enrollment Rejected",
-            message=f"""
+def send_student_rejection_email_sync(name, course, email):
+    return send_mail(
+        subject="Enrollment Rejected",
+        message=f"""
 Hi {name},
 
 Your enrollment for {course} was rejected.
 
 Please contact support.
             """,
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[email],
-            fail_silently=False,
-        )
+        from_email=settings.EMAIL_HOST_USER,
+        recipient_list=[email],
+        fail_silently=False,
+    )
+
+
+@shared_task(bind=True, max_retries=3)
+def send_student_rejection_email(self, name, course, email):
+    try:
+        send_student_rejection_email_sync(name, course, email)
         return "Rejection email sent"
 
     except Exception as e:

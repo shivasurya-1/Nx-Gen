@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     InstructorRegisterView,
     DeactivateInstructorView,
+    ActivateInstructorView,
     InstructorListView,
     InstructorCoursesView,
     InstructorProfileView,
@@ -18,6 +19,9 @@ urlpatterns = [
 
     # 🔥 Deactivate Instructor
     path('<int:id>/deactivate/', DeactivateInstructorView.as_view(), name='deactivate-instructor'),
+
+    # 🔥 Activate Instructor
+    path('<int:id>/activate/', ActivateInstructorView.as_view(), name='activate-instructor'),
 
     # 🔥 List all instructors (optional)
     path('', InstructorListView.as_view(), name='instructor-list'),

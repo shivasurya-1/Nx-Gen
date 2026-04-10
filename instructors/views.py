@@ -4,11 +4,9 @@ from rest_framework.permissions import IsAdminUser
 from rest_framework import status
 
 from django.contrib.auth import get_user_model
-import random
-import string
 
 from .models import Instructor
-from .tasks import send_instructor_credentials_email_task
+from .tasks import send_instructor_credentials_email_sync
 
 User = get_user_model()
 
@@ -36,19 +34,32 @@ class InstructorRegisterView(APIView):
         try:
             instructor = serializer.save()
 
-            # Send credentials email asynchronously
-            try:
-                send_instructor_credentials_email_task.delay(instructor.id)
-            except Exception as e:
-                # Log error but don't fail the request
-                print(f"Failed to send instructor credentials email: {str(e)}")
+            # Send credentials email immediately so the admin doesn't rely on a worker.
+            password = getattr(instructor, "_generated_password", None)
+            email_warning = None
+            if password:
+                try:
+                    send_instructor_credentials_email_sync(
+                        instructor.email,
+                        instructor.full_name,
+                        instructor.user.username if instructor.user else instructor.email,
+                        password,
+                    )
+                except Exception as email_error:
+                    email_warning = f"Instructor created, but credentials email failed: {str(email_error)}"
 
-            return Response({
+            response_payload = {
                 "message": "Instructor created successfully. Credentials have been sent to their email.",
                 "id": instructor.id,
                 "email": instructor.email,
                 "full_name": instructor.full_name
-            }, status=status.HTTP_201_CREATED)
+            }
+
+            if email_warning:
+                response_payload["message"] = "Instructor created successfully."
+                response_payload["warning"] = email_warning
+
+            return Response(response_payload, status=status.HTTP_201_CREATED)
 
         except Exception as e:
             return Response(
@@ -142,6 +153,26 @@ class DeactivateInstructorView(APIView):
         instructor.save()
 
         return Response({"message": "Instructor deactivated"}, status=200)
+
+
+class ActivateInstructorView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, id):
+        try:
+            instructor = Instructor.objects.get(id=id)
+        except Instructor.DoesNotExist:
+            return Response({"error": "Instructor not found"}, status=404)
+
+        instructor.is_active = True
+
+        if instructor.user:
+            instructor.user.is_active = True
+            instructor.user.save()
+
+        instructor.save()
+
+        return Response({"message": "Instructor activated"}, status=200)
 
 
 

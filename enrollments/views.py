@@ -7,9 +7,12 @@ from django.contrib.auth import get_user_model
 from django.conf import settings
 import random
 import string
-from enrollments.tasks import send_admin_enrollment_email
 from .permissions import IsAdminOnly
-from .tasks import send_admin_enrollment_email, send_student_approval_email, send_student_rejection_email
+from .tasks import (
+    send_admin_enrollment_email_sync,
+    send_student_approval_email_sync,
+    send_student_rejection_email_sync,
+)
 import hmac
 import hashlib
 from django.utils import timezone
@@ -37,19 +40,27 @@ class EnrollView(APIView):
             try:
                 enrollment = serializer.save()
 
-                # 🔥 EMAIL TO ADMIN (YOUR EXISTING LOGIC)
-                send_admin_enrollment_email.delay(
-                    enrollment.name,
-                    enrollment.email,
-                    enrollment.course.title,
-                    enrollment.phone
-                )
+                email_warning = None
+                try:
+                    send_admin_enrollment_email_sync(
+                        enrollment.name,
+                        enrollment.email,
+                        enrollment.course.title,
+                        enrollment.phone
+                    )
+                except Exception as email_error:
+                    email_warning = f"Enrollment created, but admin notification email failed: {str(email_error)}"
 
-                return Response({
+                payload = {
                     "message": "Enrollment successful",
                     "enrollment_id": enrollment.id,
                     "redirect": "payment"
-                }, status=status.HTTP_201_CREATED)
+                }
+
+                if email_warning:
+                    payload["warning"] = email_warning
+
+                return Response(payload, status=status.HTTP_201_CREATED)
             except Exception as e:
                 return Response(
                     {"error": "Failed to create enrollment", "details": str(e)},
@@ -121,19 +132,25 @@ class ApproveEnrollmentView(APIView):
             enrollment.is_active = True
             enrollment.save()
 
-            # 🔥 EMAIL TO STUDENT
-            send_student_approval_email.delay(
-                enrollment.name,
-                user.username,
-                send_password,
-                enrollment.course.title,
-                enrollment.email
-            )
+            email_warning = None
+            try:
+                send_student_approval_email_sync(
+                    enrollment.name,
+                    user.username,
+                    send_password,
+                    enrollment.course.title,
+                    enrollment.email
+                )
+            except Exception as email_error:
+                email_warning = f"Enrollment approved, but student email failed: {str(email_error)}"
 
-            return Response(
-                {"message": "Enrollment approved successfully. Confirmation email sent to student."},
-                status=status.HTTP_200_OK
-            )
+            payload = {"message": "Enrollment approved successfully."}
+            if email_warning:
+                payload["warning"] = email_warning
+            else:
+                payload["message"] = "Enrollment approved successfully. Confirmation email sent to student."
+
+            return Response(payload, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
                 {"error": "Failed to approve enrollment", "details": str(e)},
@@ -160,17 +177,23 @@ class RejectEnrollmentView(APIView):
             enrollment.status = "rejected"
             enrollment.save()
 
-            # 🔥 EMAIL TO STUDENT
-            send_student_rejection_email.delay(
-                enrollment.name,
-                enrollment.course.title,
-                enrollment.email
-            )
+            email_warning = None
+            try:
+                send_student_rejection_email_sync(
+                    enrollment.name,
+                    enrollment.course.title,
+                    enrollment.email
+                )
+            except Exception as email_error:
+                email_warning = f"Enrollment rejected, but student email failed: {str(email_error)}"
 
-            return Response(
-                {"message": "Enrollment rejected successfully. Student has been notified."},
-                status=status.HTTP_200_OK
-            )
+            payload = {"message": "Enrollment rejected successfully."}
+            if email_warning:
+                payload["warning"] = email_warning
+            else:
+                payload["message"] = "Enrollment rejected successfully. Student has been notified."
+
+            return Response(payload, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
                 {"error": "Failed to reject enrollment", "details": str(e)},

@@ -142,3 +142,12 @@ class BatchSerializer(serializers.ModelSerializer):
             }
             for s in obj.students.all()
         ]
+
+    def validate(self, attrs):
+        instance = getattr(self, "instance", None)
+        if instance and instance.instructor_id:
+            if "instructor" in attrs and attrs["instructor"] != instance.instructor:
+                raise serializers.ValidationError({
+                    "instructor": "Instructor cannot be changed after the batch is assigned."
+                })
+        return attrs
