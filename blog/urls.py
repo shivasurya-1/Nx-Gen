@@ -3,6 +3,7 @@ from .views import (
     AdminBlogListCreateView,
     AdminBlogDetailView,
     AdminBlogMetaView,
+    AdminBlogCategoryListCreateView,
     PublicBlogListView,
     PublicBlogDetailView
 )
@@ -13,6 +14,7 @@ urlpatterns = [
     # Admin APIs
     path('admin/blogs/', AdminBlogListCreateView.as_view()),
     path('admin/meta/', AdminBlogMetaView.as_view()),
+    path('admin/categories/', AdminBlogCategoryListCreateView.as_view()),
     path('admin/blogs/<int:id>/', AdminBlogDetailView.as_view()),
     path('admin/blogs/<int:id>/edit/', AdminBlogDetailView.as_view()),
 

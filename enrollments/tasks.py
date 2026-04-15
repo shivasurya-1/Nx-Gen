@@ -85,6 +85,8 @@ Login Details:
 Username: {username}
 Password: {password}
 
+Important: You must change your password on first login.
+
 Course: {course}
             """,
         from_email=settings.EMAIL_HOST_USER,

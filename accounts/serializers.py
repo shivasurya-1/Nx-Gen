@@ -84,6 +84,20 @@ class LoginSerializer(serializers.Serializer):
                     "access": str(refresh.access_token)     # ✅ ADD
                 }
 
+        if role == "student":
+            student_profile = getattr(user, "student_profile", None)
+            if student_profile and student_profile.is_first_login:
+                refresh = RefreshToken.for_user(user)
+                return {
+                    "user_id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "role": role,
+                    "is_first_login": True,
+                    "refresh": str(refresh),
+                    "access": str(refresh.access_token),
+                }
+
         # 🔥 NORMAL LOGIN
         refresh = RefreshToken.for_user(user)
 

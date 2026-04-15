@@ -18,6 +18,7 @@ import hashlib
 from django.utils import timezone
 from .models import Enrollment
 from .serializers import EnrollmentSerializer
+from accounts.models import StudentProfile
 
 
 import razorpay
@@ -96,38 +97,31 @@ class ApproveEnrollmentView(APIView):
             return Response({"message": "Already approved"}, status=status.HTTP_200_OK)
 
         try:
-            # ✅ FIX: reuse existing user
+            # Reuse existing user if present, but issue fresh temporary credentials.
             user = User.objects.filter(email=enrollment.email).first()
+            temp_password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
 
             if not user:
-                # 🔥 Generate username
                 username = enrollment.email.split("@")[0]
-
-                # Avoid duplicate username
                 if User.objects.filter(username=username).exists():
                     username = username + str(random.randint(10, 99))
-
-                # 🔥 Generate password
-                password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-
-                # 🔥 Create user
                 user = User.objects.create_user(
                     username=username,
                     email=enrollment.email,
-                    password=password,
+                    password=temp_password,
                     role="student"
                 )
-
-                user.is_active = True
-                user.save()
-
-                send_password = password  # only for new user
-
             else:
-                # 🔥 Existing user → no new password
-                send_password = "Use your existing password"
+                user.role = "student"
+                user.set_password(temp_password)
 
-            # 🔥 Update enrollment
+            user.is_active = True
+            user.save()
+
+            student_profile, _ = StudentProfile.objects.get_or_create(user=user)
+            student_profile.is_first_login = True
+            student_profile.save(update_fields=["is_first_login"])
+
             enrollment.status = "approved"
             enrollment.is_active = True
             enrollment.save()
@@ -137,7 +131,7 @@ class ApproveEnrollmentView(APIView):
                 send_student_approval_email_sync(
                     enrollment.name,
                     user.username,
-                    send_password,
+                    temp_password,
                     enrollment.course.title,
                     enrollment.email
                 )

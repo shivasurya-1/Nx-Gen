@@ -92,6 +92,12 @@ class ChangePasswordView(APIView):
             instructor.is_first_login = False   # ✅ IMPORTANT
             instructor.save()
 
+        if hasattr(user, "student_profile"):
+            student_profile = user.student_profile
+            if student_profile.is_first_login:
+                student_profile.is_first_login = False
+                student_profile.save(update_fields=["is_first_login"])
+
         return Response({
             "message": "Password changed successfully"
         }, status=status.HTTP_200_OK)

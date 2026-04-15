@@ -11,6 +11,23 @@ from .serializers import BlogSerializer, BlogCategorySerializer, TagSerializer
 from .permissions import IsAdminOnly
 
 
+def sync_blog_categories_from_courses():
+    """Mirror course categories into blog categories by name."""
+    from .models import BlogCategory
+
+    try:
+        from courses.models import Category as CourseCategory
+    except Exception:
+        return
+
+    course_names = CourseCategory.objects.values_list("name", flat=True)
+    for name in course_names:
+        clean_name = (name or "").strip()
+        if not clean_name:
+            continue
+        BlogCategory.objects.get_or_create(name=clean_name)
+
+
 class BlogPagination(PageNumberPagination):
     page_size = 5
 
@@ -56,6 +73,8 @@ class AdminBlogMetaView(APIView):
     def get(self, request):
         from .models import BlogCategory, Tag
 
+        sync_blog_categories_from_courses()
+
         categories = BlogCategory.objects.all().order_by("name")
         tags = Tag.objects.all().order_by("name")
 
@@ -65,6 +84,55 @@ class AdminBlogMetaView(APIView):
                 "tags": TagSerializer(tags, many=True).data,
             }
         )
+
+
+class AdminBlogCategoryListCreateView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOnly]
+
+    def get(self, request):
+        from .models import BlogCategory
+
+        sync_blog_categories_from_courses()
+
+        categories = BlogCategory.objects.all().order_by("name")
+        serializer = BlogCategorySerializer(categories, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        from .models import BlogCategory
+
+        raw_name = request.data.get("name") or ""
+        name = " ".join(str(raw_name).split()).strip()
+        if not name:
+            return Response({"detail": "Category name is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(name) > 150:
+            return Response({"detail": "Category name cannot exceed 150 characters."}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing = BlogCategory.objects.filter(name__iexact=name).first()
+        if existing:
+            serializer = BlogCategorySerializer(existing)
+            return Response(
+                {
+                    "created": False,
+                    "detail": "Category already exists.",
+                    "category": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        serializer = BlogCategorySerializer(data={"name": name})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {
+                    "created": True,
+                    "detail": "Category created successfully.",
+                    "category": serializer.data,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class AdminBlogDetailView(APIView):

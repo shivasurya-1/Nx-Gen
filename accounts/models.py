@@ -20,6 +20,7 @@ class StudentProfile(models.Model):
     phone = models.CharField(max_length=20, blank=True, null=True)
     location = models.CharField(max_length=200, blank=True, null=True)
     bio = models.TextField(blank=True, null=True)
+    is_first_login = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.user.username}'s Profile"
