@@ -118,6 +118,7 @@ class Lesson(models.Model):
 class Submission(models.Model):
     STATUS_CHOICES = (
         ("submitted", "Submitted"),
+        ("graded", "Graded"),
     )
 
     lesson = models.ForeignKey(
@@ -135,6 +136,16 @@ class Submission(models.Model):
     text_answer = models.TextField(blank=True)
     file_upload = models.FileField(upload_to="submissions/", null=True, blank=True, storage=RawMediaCloudinaryStorage())
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="submitted")
+    score = models.PositiveIntegerField(null=True, blank=True)
+    feedback = models.TextField(blank=True)
+    graded_at = models.DateTimeField(null=True, blank=True)
+    graded_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="graded_submissions",
+    )
     submitted_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

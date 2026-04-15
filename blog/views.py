@@ -7,7 +7,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from .models import Blog
-from .serializers import BlogSerializer
+from .serializers import BlogSerializer, BlogCategorySerializer, TagSerializer
 from .permissions import IsAdminOnly
 
 
@@ -48,6 +48,23 @@ class AdminBlogListCreateView(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AdminBlogMetaView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOnly]
+
+    def get(self, request):
+        from .models import BlogCategory, Tag
+
+        categories = BlogCategory.objects.all().order_by("name")
+        tags = Tag.objects.all().order_by("name")
+
+        return Response(
+            {
+                "categories": BlogCategorySerializer(categories, many=True).data,
+                "tags": TagSerializer(tags, many=True).data,
+            }
+        )
 
 
 class AdminBlogDetailView(APIView):

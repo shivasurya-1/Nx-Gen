@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny
+from django.utils import timezone
 
 from accounts.permissions import IsStudent, IsInstructor
 from .models import Course, CourseContent, Category, Module, Lesson, Submission, Batch
@@ -649,10 +650,19 @@ class AssignmentSubmitView(APIView):
         # Check if already submitted
         submission = Submission.objects.filter(lesson=lesson, student=request.user).first()
         
-        data = request.data.copy()
-        data['lesson'] = lesson.id
-        data['student'] = request.user.id
-        data['status'] = 'submitted'
+        # Only allow answer payload from students.
+        data = {
+            'lesson': lesson.id,
+            'student': request.user.id,
+            'status': 'submitted',
+            'text_answer': request.data.get('text_answer', ''),
+            'file_upload': request.data.get('file_upload'),
+            # Re-submission invalidates prior grading.
+            'score': None,
+            'feedback': '',
+            'graded_at': None,
+            'graded_by': None,
+        }
 
         if submission:
             # Update existing submission
@@ -714,26 +724,88 @@ class AssignmentStatusView(APIView):
 
             if sub:
                 response_data.append({
+                    "submission_id": sub.id,
                     "student_id": user.id,
                     "student_name": f"{user.first_name} {user.last_name}".strip() or user.email,
                     "student_email": user.email,
                     "batch": batch_data,
                     "status": "Submitted",
                     "submitted_at": sub.submitted_at,
+                    "score": sub.score,
+                    "feedback": sub.feedback,
+                    "graded_at": sub.graded_at,
+                    "graded_by": f"{sub.graded_by.first_name} {sub.graded_by.last_name}".strip() or sub.graded_by.email if sub.graded_by else None,
                     "submission_data": SubmissionSerializer(sub).data
                 })
             else:
                 response_data.append({
+                    "submission_id": None,
                     "student_id": user.id,
                     "student_name": f"{user.first_name} {user.last_name}".strip() or user.email,
                     "student_email": user.email,
                     "batch": batch_data,
                     "status": "Not Submitted",
                     "submitted_at": None,
+                    "score": None,
+                    "feedback": "",
+                    "graded_at": None,
+                    "graded_by": None,
                     "submission_data": None
                 })
 
         return Response(response_data, status=200)
+
+
+class AssignmentGradeView(APIView):
+    """
+    PATCH /modules/<module_id>/lessons/<lesson_id>/assignment/submissions/<submission_id>/grade/
+    Allows assigned instructor/admin to grade an existing submission.
+    """
+
+    def get_permissions(self):
+        return [IsAssignedInstructorOrAdmin()]
+
+    def patch(self, request, module_id, lesson_id, submission_id):
+        try:
+            lesson = Lesson.objects.get(id=lesson_id, module_id=module_id)
+        except Lesson.DoesNotExist:
+            return Response({"error": "Lesson not found in this module"}, status=404)
+
+        if not lesson.assignment_title:
+            return Response({"error": "No assignment configured for this lesson"}, status=404)
+
+        course = lesson.module.course
+        permission = IsAssignedInstructorOrAdmin()
+        if not permission.has_object_permission(request, self, course):
+            return Response({"error": "You don't have permission to grade this assignment"}, status=403)
+
+        try:
+            submission = Submission.objects.get(id=submission_id, lesson=lesson)
+        except Submission.DoesNotExist:
+            return Response({"error": "Submission not found for this assignment"}, status=404)
+
+        score_raw = request.data.get("score")
+        feedback = (request.data.get("feedback") or "").strip()
+
+        if score_raw in (None, ""):
+            return Response({"error": "score is required"}, status=400)
+
+        try:
+            score = int(score_raw)
+        except (TypeError, ValueError):
+            return Response({"error": "score must be an integer"}, status=400)
+
+        if score < 0 or score > 100:
+            return Response({"error": "score must be between 0 and 100"}, status=400)
+
+        submission.score = score
+        submission.feedback = feedback
+        submission.status = "graded"
+        submission.graded_at = timezone.now()
+        submission.graded_by = request.user
+        submission.save(update_fields=["score", "feedback", "status", "graded_at", "graded_by"])
+
+        return Response(SubmissionSerializer(submission).data, status=200)
 
 class InstructorStudentDetailView(APIView):
     """

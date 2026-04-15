@@ -23,6 +23,7 @@ from .views import (
     AssignmentCreateUpdateView,
     AssignmentSubmitView,
     AssignmentStatusView,
+    AssignmentGradeView,
     # Student / Instructor assignment overview
     StudentAssignmentListView,
     InstructorAssignmentListView,
@@ -77,6 +78,8 @@ urlpatterns = [
     path('modules/<int:module_id>/lessons/<int:lesson_id>/assignment/submit/', AssignmentSubmitView.as_view()),
     # Instructor views all student statuses for an assignment
     path('modules/<int:module_id>/lessons/<int:lesson_id>/assignment/status/', AssignmentStatusView.as_view()),
+    # Instructor grades a specific student submission
+    path('modules/<int:module_id>/lessons/<int:lesson_id>/assignment/submissions/<int:submission_id>/grade/', AssignmentGradeView.as_view()),
 
     # ── ASSIGNMENT OVERVIEWS ──────────────────────────────────────────────
     # Student: list all assignments across enrolled courses + submission status
