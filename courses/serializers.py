@@ -21,11 +21,10 @@ class LessonSerializer(serializers.ModelSerializer):
 
         # Ignore non-file values passed to the file field during partial updates.
         # This prevents: "The submitted data was not a file. Check the encoding type on the form."
+        from django.core.files.base import File
         raw_file = data.get('file', None)
-        if isinstance(raw_file, str):
+        if raw_file is not None and not isinstance(raw_file, File):
             data.pop('file', None)
-        elif raw_file in ["", "null", "undefined"]:
-            data['file'] = None
             
         return super().to_internal_value(data)
 

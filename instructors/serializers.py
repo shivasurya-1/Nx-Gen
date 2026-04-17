@@ -127,6 +127,14 @@ class InstructorDetailSerializer(serializers.ModelSerializer):
         model = Instructor
         fields = "__all__"
 
+    def to_internal_value(self, data):
+        data = data.copy()
+        from django.core.files.base import File
+        raw_doc = data.get('document', None)
+        if raw_doc is not None and not isinstance(raw_doc, File):
+            data.pop('document', None)
+        return super().to_internal_value(data)
+
     def update(self, instance, validated_data):
 
         request = self.context.get("request")
