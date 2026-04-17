@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.db.models import Q
 from .models import Category, Course, CourseContent, Module, Lesson, Submission, Batch
 
 
@@ -9,14 +10,22 @@ class LessonSerializer(serializers.ModelSerializer):
     assignment_due_date = serializers.DateTimeField(required=False, allow_null=True)
 
     def to_internal_value(self, data):
+        data = data.copy()
+
         # Handle empty strings from frontend for assignment_due_date (previously called due_date)
         if 'assignment_due_date' in data and data['assignment_due_date'] in ["", "null", "undefined", None]:
-            data = data.copy()
             data['assignment_due_date'] = None
         # Support legacy frontend keys if still using "due_date"
         elif 'due_date' in data and data['due_date'] in ["", "null", "undefined", None]:
-            data = data.copy()
             data['assignment_due_date'] = None
+
+        # Ignore non-file values passed to the file field during partial updates.
+        # This prevents: "The submitted data was not a file. Check the encoding type on the form."
+        raw_file = data.get('file', None)
+        if isinstance(raw_file, str):
+            data.pop('file', None)
+        elif raw_file in ["", "null", "undefined"]:
+            data['file'] = None
             
         return super().to_internal_value(data)
 
@@ -74,11 +83,47 @@ class CourseContentDisplaySerializer(serializers.ModelSerializer):
         ]
 
     def get_training_modules(self, course):
-        modules = course.modules.filter(section_type="training").order_by("order")
+        request = self.context.get("request")
+        modules = course.modules.filter(section_type="training")
+
+        if request and request.user.is_authenticated and getattr(request.user, "role", "") == "student":
+            from .models import Batch
+            student_batches = Batch.objects.filter(
+                students=request.user,
+                course=course,
+                is_active=True,
+            )
+            instructor_ids = list(
+                student_batches.exclude(instructor__isnull=True).values_list("instructor_id", flat=True)
+            )
+            if instructor_ids:
+                modules = modules.filter(
+                    Q(created_by_id__in=instructor_ids) | Q(created_by__isnull=True)
+                )
+
+        modules = modules.order_by("order")
         return ModuleSerializer(modules, many=True).data
 
     def get_industry_readiness_modules(self, course):
-        modules = course.modules.filter(section_type="industry_readiness").order_by("order")
+        request = self.context.get("request")
+        modules = course.modules.filter(section_type="industry_readiness")
+
+        if request and request.user.is_authenticated and getattr(request.user, "role", "") == "student":
+            from .models import Batch
+            student_batches = Batch.objects.filter(
+                students=request.user,
+                course=course,
+                is_active=True,
+            )
+            instructor_ids = list(
+                student_batches.exclude(instructor__isnull=True).values_list("instructor_id", flat=True)
+            )
+            if instructor_ids:
+                modules = modules.filter(
+                    Q(created_by_id__in=instructor_ids) | Q(created_by__isnull=True)
+                )
+
+        modules = modules.order_by("order")
         return ModuleSerializer(modules, many=True).data
 
 

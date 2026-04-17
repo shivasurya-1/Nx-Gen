@@ -6,12 +6,13 @@ from django.conf import settings
 def send_instructor_credentials_email_sync(email, name, username, password):
     subject = "Your Instructor Account is Created 🎉"
 
-    message = f"""  N
+    message = f"""
 Hi {name},
 
 Your instructor account has been successfully created.
 
 Login Details:
+UserEmail: {email}
 Username: {username}
 Password: {password}
 

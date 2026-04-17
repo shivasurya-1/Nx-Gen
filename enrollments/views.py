@@ -1,4 +1,5 @@
 from datetime import timedelta
+import re
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -101,10 +102,14 @@ class ApproveEnrollmentView(APIView):
             user = User.objects.filter(email=enrollment.email).first()
             temp_password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
 
+            base_username = re.sub(r'[^a-zA-Z0-9]+', '', (enrollment.name or '').lower()) or enrollment.email.split("@")[0]
+            username = base_username
+            suffix = 1
+            while User.objects.filter(username=username).exclude(email=enrollment.email).exists():
+                suffix += 1
+                username = f"{base_username}{suffix}"
+
             if not user:
-                username = enrollment.email.split("@")[0]
-                if User.objects.filter(username=username).exists():
-                    username = username + str(random.randint(10, 99))
                 user = User.objects.create_user(
                     username=username,
                     email=enrollment.email,
@@ -113,6 +118,7 @@ class ApproveEnrollmentView(APIView):
                 )
             else:
                 user.role = "student"
+                user.username = username
                 user.set_password(temp_password)
 
             user.is_active = True

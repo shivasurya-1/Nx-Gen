@@ -6,6 +6,7 @@ from courses.models import Course
 from django.contrib.auth import get_user_model
 import random
 import string
+import re
 
 User = get_user_model()
 
@@ -43,14 +44,22 @@ class InstructorCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         courses = validated_data.pop("assigned_courses", [])
         email = validated_data["email"]
+        full_name = validated_data.get("full_name", "")
 
         password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+
+        base_username = re.sub(r'[^a-zA-Z0-9]+', '', full_name.lower()) or email.split("@")[0]
+        username = base_username
+        suffix = 1
+        while User.objects.filter(username=username).exclude(email=email).exists():
+            suffix += 1
+            username = f"{base_username}{suffix}"
 
         user = User.objects.filter(email=email).first()
 
         if not user:
             user = User.objects.create_user(
-                username=email,
+                username=username,
                 email=email,
                 password=password,
                 role="instructor"   # ✅ SET ROLE HERE
@@ -58,6 +67,7 @@ class InstructorCreateSerializer(serializers.ModelSerializer):
         else:
             # 🔥 UPDATE ROLE IF EXISTS
             user.role = "instructor"
+            user.username = username
             user.set_password(password)
             user.save()
 

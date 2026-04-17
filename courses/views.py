@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
+from django.db.models import Q
 
 from accounts.permissions import IsStudent, IsInstructor
 from .models import Course, CourseContent, Category, Module, Lesson, Submission, Batch
@@ -221,7 +222,7 @@ class CourseContentView(APIView):
                 if not is_assigned and not request.user.is_superuser:
                     return Response({"error": "You are not assigned to this course"}, status=403)
 
-        serializer = CourseContentDisplaySerializer(course)
+        serializer = CourseContentDisplaySerializer(course, context={"request": request})
         return Response(serializer.data)
 
 
@@ -632,6 +633,7 @@ class AssignmentSubmitView(APIView):
     Student submits their assignment answer.
     """
     permission_classes = [AllowAny] # Checked manually for enrollment below
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request, module_id, lesson_id, assignment_id=None):
         from .models import Lesson, Submission
@@ -650,6 +652,18 @@ class AssignmentSubmitView(APIView):
         course = lesson.module.course
         if not Enrollment.objects.filter(email=request.user.email, course=course, status='approved').exists():
             return Response({"error": "You are not enrolled in this course."}, status=403)
+
+        # If this lesson is instructor-specific, only students from that instructor's active batches can submit.
+        lesson_instructor = lesson.module.created_by
+        if lesson_instructor:
+            is_student_in_batch = Batch.objects.filter(
+                course=course,
+                instructor=lesson_instructor,
+                is_active=True,
+                students=request.user,
+            ).exists()
+            if not is_student_in_batch:
+                return Response({"error": "This assignment is not assigned to your batch."}, status=403)
 
         # Check if already submitted
         submission = Submission.objects.filter(lesson=lesson, student=request.user).first()
@@ -709,9 +723,23 @@ class AssignmentStatusView(APIView):
         if not permission.has_object_permission(request, self, course):
             return Response({"error": "You don't have permission to view status for this assignment"}, status=403)
 
-        # Get all enrolled students via email match
-        approved_emails = Enrollment.objects.filter(course=course, status='approved').values_list('email', flat=True)
-        enrolled_users = User.objects.filter(email__in=approved_emails).prefetch_related('enrolled_batches')
+        # Build student scope.
+        # - Admin: all approved enrollments in this course.
+        # - Instructor: only students in instructor's active batches for this course.
+        if request.user.is_superuser:
+            approved_emails = Enrollment.objects.filter(course=course, status='approved').values_list('email', flat=True)
+            enrolled_users = User.objects.filter(email__in=approved_emails).prefetch_related('enrolled_batches')
+        elif hasattr(request.user, 'instructor'):
+            instructor_batches = Batch.objects.filter(
+                course=course,
+                instructor=request.user.instructor,
+                is_active=True,
+            )
+            enrolled_users = User.objects.filter(
+                id__in=instructor_batches.values_list('students__id', flat=True)
+            ).distinct().prefetch_related('enrolled_batches')
+        else:
+            enrolled_users = User.objects.none()
 
         # Get all submissions for this lesson
         submissions = Submission.objects.filter(lesson=lesson)
@@ -723,7 +751,16 @@ class AssignmentStatusView(APIView):
             sub = submission_map.get(user.id)
             
             # Find batch for this student in this course
-            batch = user.enrolled_batches.filter(course=course, is_active=True).first()
+            if request.user.is_superuser:
+                batch = user.enrolled_batches.filter(course=course, is_active=True).first()
+            elif hasattr(request.user, 'instructor'):
+                batch = user.enrolled_batches.filter(
+                    course=course,
+                    is_active=True,
+                    instructor=request.user.instructor,
+                ).first()
+            else:
+                batch = None
             batch_data = {"id": batch.id, "name": batch.name} if batch else None
 
             if sub:
@@ -936,9 +973,27 @@ class StudentAssignmentListView(APIView):
             status='approved'
         ).values_list('course_id', flat=True)
 
-        lessons = Lesson.objects.filter(
+        student_batches = Batch.objects.filter(
+            students=request.user,
+            is_active=True,
+            course_id__in=enrolled_course_ids,
+        )
+        batch_instructor_ids = list(
+            student_batches.exclude(instructor__isnull=True).values_list('instructor_id', flat=True)
+        )
+
+        lessons_qs = Lesson.objects.filter(
             module__course__id__in=enrolled_course_ids
-        ).exclude(assignment_title="").select_related('module__course')
+        ).exclude(assignment_title="")
+
+        # Restrict student-visible assignments to their instructor scope when batches are configured.
+        if student_batches.exists() and batch_instructor_ids:
+            lessons_qs = lessons_qs.filter(
+                Q(module__created_by_id__in=batch_instructor_ids) |
+                Q(module__created_by__isnull=True)
+            )
+
+        lessons = lessons_qs.select_related('module__course')
 
         data = []
         for lesson in lessons:
@@ -973,7 +1028,8 @@ class InstructorAssignmentListView(APIView):
             if hasattr(request.user, 'instructor'):
                 assigned_courses = request.user.instructor.assigned_courses.all()
                 lessons = Lesson.objects.filter(
-                    module__course__in=assigned_courses
+                    module__course__in=assigned_courses,
+                    module__created_by=request.user.instructor,
                 ).exclude(assignment_title="")
             else:
                 lessons = Lesson.objects.none()
@@ -1155,8 +1211,21 @@ class InstructorStudentDetailView(APIView):
             course_id__in=instructor_course_ids
         ).values_list('course_id', flat=True)
 
+        # Ensure the student is part of at least one active batch for this instructor.
+        instructor_batch_course_ids = Batch.objects.filter(
+            instructor=request.user.instructor,
+            is_active=True,
+            students=student,
+        ).values_list('course_id', flat=True)
+
+        enrolled_course_ids = [
+            course_id for course_id in enrolled_course_ids
+            if course_id in set(instructor_batch_course_ids)
+        ]
+
         lessons = Lesson.objects.filter(
-            module__course__id__in=enrolled_course_ids
+            module__course__id__in=enrolled_course_ids,
+            module__created_by=request.user.instructor,
         ).exclude(assignment_title="").select_related('module__course')
 
         data = []

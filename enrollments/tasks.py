@@ -82,6 +82,7 @@ Hi {name},
 Your enrollment is approved.
 
 Login Details:
+UserEmail: {email}
 Username: {username}
 Password: {password}
 
