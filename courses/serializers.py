@@ -9,6 +9,11 @@ from .models import Category, Course, CourseContent, Module, Lesson, Submission,
 class LessonSerializer(serializers.ModelSerializer):
     assignment_due_date = serializers.DateTimeField(required=False, allow_null=True)
 
+    def validate_file(self, value):
+        if value and value.size > 10 * 1024 * 1024:
+            raise serializers.ValidationError("max file size is 10MB")
+        return value
+
     def to_internal_value(self, data):
         data = data.copy()
 
@@ -27,6 +32,26 @@ class LessonSerializer(serializers.ModelSerializer):
             data.pop('file', None)
             
         return super().to_internal_value(data)
+
+    def validate(self, data):
+        file = data.get('file')
+        assignment_title = data.get('assignment_title')
+        
+        # If not in data (partial update), check instance
+        if assignment_title is None and self.instance:
+            assignment_title = getattr(self.instance, 'assignment_title', None)
+
+        # File size check is now handled by validate_file field-level validator otomatis by rest framework
+        pass
+
+        # In assignment context, or if title is present, file is mandatory
+        if self.context.get('is_assignment') or assignment_title:
+            # If no file in current update AND no file exists on instance
+            existing_file = getattr(self.instance, 'file', None)
+            if not file and not existing_file:
+                raise serializers.ValidationError({"file": "Assignment file is mandatory."})
+        
+        return data
 
     class Meta:
         model = Lesson
@@ -161,9 +186,22 @@ class CategorySerializer(serializers.ModelSerializer):
 # SUBMISSION
 # ─────────────────────────────────────────────
 class SubmissionSerializer(serializers.ModelSerializer):
+    file_upload = serializers.FileField(
+        required=True, 
+        allow_null=False,
+        error_messages={'required': 'Assignment file is mandatory.', 'null': 'Assignment file is mandatory.'}
+    )
+
     class Meta:
         model = Submission
         fields = "__all__"
+
+    def validate_file_upload(self, value):
+        if not value:
+            raise serializers.ValidationError("Assignment file is mandatory.")
+        if value.size > 10 * 1024 * 1024:
+            raise serializers.ValidationError("max file size is 10MB")
+        return value
 
 
 # ─────────────────────────────────────────────

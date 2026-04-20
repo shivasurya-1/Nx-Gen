@@ -166,10 +166,15 @@ class PublicBlogListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        from django.utils import timezone
+        now = timezone.now()
+        
         blogs = Blog.objects.filter(
-            status="published",
             is_deleted=False
-        ).order_by("-created_at")
+        ).filter(
+            Q(status="published") | 
+            (Q(status="scheduled") & Q(publish_at__lte=now))
+        ).order_by("-publish_at", "-created_at")
 
         serializer = BlogSerializer(blogs, many=True)
         return Response(serializer.data)
@@ -179,11 +184,17 @@ class PublicBlogDetailView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, slug):
+        from django.utils import timezone
+        now = timezone.now()
+        
         blog = get_object_or_404(
             Blog,
-            slug=slug,
-            status="published",
-            is_deleted=False
+            Q(slug=slug) &
+            Q(is_deleted=False) &
+            (
+                Q(status="published") | 
+                (Q(status="scheduled") & Q(publish_at__lte=now))
+            )
         )
 
         serializer = BlogSerializer(blog)

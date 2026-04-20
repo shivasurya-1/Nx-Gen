@@ -606,6 +606,28 @@ class AssignmentCreateUpdateView(APIView):
     def patch(self, request, module_id, lesson_id):
         return self.post(request, module_id, lesson_id)
 
+    def delete(self, request, module_id, lesson_id):
+        try:
+            lesson = Lesson.objects.get(id=lesson_id, module_id=module_id)
+        except Lesson.DoesNotExist:
+            return Response({"error": "Lesson not found in this module"}, status=404)
+
+        permission = CanEditCourseContent()
+        if not permission.has_object_permission(request, self, lesson):
+            return Response({"error": "You don't have permission to delete assignments for this lesson"}, status=403)
+
+        # Clear assignment fields
+        lesson.assignment_title = ""
+        lesson.assignment_description = ""
+        lesson.assignment_due_date = None
+        lesson.file = None
+        lesson.save()
+
+        # 🔥 Clear all student submissions for this lesson
+        Submission.objects.filter(lesson=lesson).delete()
+
+        return Response({"message": "Assignment record deleted successfully"}, status=204)
+
     def post(self, request, module_id, lesson_id):
         try:
             lesson = Lesson.objects.get(id=lesson_id, module_id=module_id)
@@ -619,9 +641,14 @@ class AssignmentCreateUpdateView(APIView):
         # Merge input data
         data = request.data.copy()
 
-        serializer = LessonSerializer(lesson, data=data, partial=True)
+        was_assignment = bool(lesson.assignment_title)
+        serializer = LessonSerializer(lesson, data=data, partial=True, context={'is_assignment': True})
         if serializer.is_valid():
             serializer.save()
+            # If this is a fresh assignment creation on a previously non-assignment lesson,
+            # clear any legacy submissions that might exist from previous assignment iterations.
+            if not was_assignment:
+                Submission.objects.filter(lesson=lesson).delete()
             return Response(serializer.data, status=200)
         return Response(serializer.errors, status=400)
 
@@ -869,11 +896,16 @@ class InstructorStudentDetailView(APIView):
         except User.DoesNotExist:
             return Response({"error": "Student not found"}, status=404)
 
-        # Get courses this student is enrolled in
-        enrolled_course_ids = Enrollment.objects.filter(
-            email=student.email,
-            status='approved'
-        ).values_list('course_id', flat=True)
+        # Get courses this student is enrolled in that are also assigned to this instructor (or all if admin)
+        enrollment_qs = Enrollment.objects.filter(email=student.email, status='approved')
+        
+        if not request.user.is_superuser and hasattr(request.user, 'instructor'):
+            assigned_courses = request.user.instructor.assigned_courses.all()
+            enrollment_qs = enrollment_qs.filter(course__in=assigned_courses)
+        elif not request.user.is_superuser:
+             return Response({"error": "Instructor profile not found."}, status=403)
+
+        enrolled_course_ids = enrollment_qs.values_list('course_id', flat=True)
 
         lessons = Lesson.objects.filter(
             module__course__id__in=enrolled_course_ids
@@ -890,7 +922,7 @@ class InstructorStudentDetailView(APIView):
                     "id": lesson.module.course.id,
                     "title": lesson.module.course.title,
                 },
-                "status": "Submitted" if submission else "Not Submitted",
+                "status": submission.status if submission else "Not Submitted",
                 "submitted_at": submission.submitted_at if submission else None,
                 "submission_data": SubmissionSerializer(submission).data if submission else None
             })
@@ -930,9 +962,13 @@ class AssignmentDetailView(APIView):
 
         data = request.data.copy()
 
+        was_assignment = bool(lesson.assignment_title)
         serializer = LessonSerializer(lesson, data=data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            # If this becomes a fresh assignment or title is set for the first time, clear legacy data.
+            if not was_assignment and lesson.assignment_title:
+                Submission.objects.filter(lesson=lesson).delete()
             return Response(serializer.data)
         return Response(serializer.errors, status=400)
 
@@ -953,6 +989,10 @@ class AssignmentDetailView(APIView):
         lesson.assignment_title = ""
         lesson.assignment_description = ""
         lesson.save()
+
+        # 🔥 CRITICAL: Remove all student submissions for this lesson when the assignment is deleted.
+        Submission.objects.filter(lesson=lesson).delete()
+
         return Response({"message": "Assignment removed from lesson"}, status=204)
 
 
@@ -986,13 +1026,7 @@ class StudentAssignmentListView(APIView):
             module__course__id__in=enrolled_course_ids
         ).exclude(assignment_title="")
 
-        # Restrict student-visible assignments to their instructor scope when batches are configured.
-        if student_batches.exists() and batch_instructor_ids:
-            lessons_qs = lessons_qs.filter(
-                Q(module__created_by_id__in=batch_instructor_ids) |
-                Q(module__created_by__isnull=True)
-            )
-
+        # Show all assignments in the student's enrolled courses.
         lessons = lessons_qs.select_related('module__course')
 
         data = []
@@ -1029,7 +1063,6 @@ class InstructorAssignmentListView(APIView):
                 assigned_courses = request.user.instructor.assigned_courses.all()
                 lessons = Lesson.objects.filter(
                     module__course__in=assigned_courses,
-                    module__created_by=request.user.instructor,
                 ).exclude(assignment_title="")
             else:
                 lessons = Lesson.objects.none()
@@ -1181,76 +1214,6 @@ class InstructorBatchListView(APIView):
                 })
             return Response(data)
         return Response({"error": "Instructor profile not found."}, status=403)
-
-
-class InstructorStudentDetailView(APIView):
-    def get_permissions(self):
-        from accounts.permissions import IsInstructor
-        return [IsInstructor()]
-
-    def get(self, request, student_id):
-        from enrollments.models import Enrollment
-        from django.contrib.auth import get_user_model
-        from .models import Lesson, Submission
-        from .serializers import LessonSerializer, SubmissionSerializer
-
-        User = get_user_model()
-        try:
-            student = User.objects.get(id=student_id)
-        except User.DoesNotExist:
-            return Response({"error": "Student not found"}, status=404)
-
-        if not hasattr(request.user, "instructor"):
-            return Response({"error": "Instructor profile not found."}, status=403)
-
-        instructor_course_ids = request.user.instructor.assigned_courses.values_list("id", flat=True)
-
-        enrolled_course_ids = Enrollment.objects.filter(
-            email=student.email,
-            status='approved',
-            course_id__in=instructor_course_ids
-        ).values_list('course_id', flat=True)
-
-        # Ensure the student is part of at least one active batch for this instructor.
-        instructor_batch_course_ids = Batch.objects.filter(
-            instructor=request.user.instructor,
-            is_active=True,
-            students=student,
-        ).values_list('course_id', flat=True)
-
-        enrolled_course_ids = [
-            course_id for course_id in enrolled_course_ids
-            if course_id in set(instructor_batch_course_ids)
-        ]
-
-        lessons = Lesson.objects.filter(
-            module__course__id__in=enrolled_course_ids,
-            module__created_by=request.user.instructor,
-        ).exclude(assignment_title="").select_related('module__course')
-
-        data = []
-        for lesson in lessons:
-            submission = Submission.objects.filter(lesson=lesson, student=student).first()
-            data.append({
-                "id": submission.id if submission else lesson.id,
-                "status": "Submitted" if submission else "Not Submitted",
-                "submitted_at": submission.submitted_at if submission else None,
-                "submission_data": SubmissionSerializer(submission).data if submission else None,
-                "module": {
-                    "id": lesson.module.id,
-                    "title": lesson.module.title
-                },
-                "course": {
-                    "id": lesson.module.course.id,
-                    "title": lesson.module.course.title
-                },
-                "assignment": {
-                    "id": lesson.id,
-                    "assignment_title": lesson.assignment_title,
-                    "title": lesson.title,
-                }
-            })
-        return Response(data)
 
 
 class ManageLiveClassView(APIView):

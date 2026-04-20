@@ -59,12 +59,25 @@ class BlogSerializer(serializers.ModelSerializer):
 
         return data
 
+    def validate(self, data):
+        from django.utils import timezone
+        status = data.get("status")
+        publish_at = data.get("publish_at")
+
+        if status == "scheduled" and not publish_at:
+            raise serializers.ValidationError(
+                {"publish_at": "Publish date is required for scheduled blogs."}
+            )
+        
+        # If publishing now and no date set, default to now
+        if status == "published" and not publish_at:
+            data["publish_at"] = timezone.now()
+        
+        return data
+
     def create(self, validated_data):
         tags = validated_data.pop("tags", [])
-        title = validated_data.get("title")
-
-        validated_data["slug"] = slugify(title)
-
+        # Slug is handled by the model's save() method
         blog = Blog.objects.create(**validated_data)
         blog.tags.set(tags)   # ✅ handles multiple tags
         return blog
