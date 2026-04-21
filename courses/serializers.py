@@ -1,13 +1,19 @@
 from rest_framework import serializers
 from django.db.models import Q
-from .models import Category, Course, CourseContent, Module, Lesson, Submission, Batch
+from .models import Category, Course, CourseContent, Module, Lesson, Assignment, Submission, Batch
 
 
 # ─────────────────────────────────────────────
 # LESSON
 # ─────────────────────────────────────────────
+class AssignmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Assignment
+        fields = "__all__"
+
+
 class LessonSerializer(serializers.ModelSerializer):
-    assignment_due_date = serializers.DateTimeField(required=False, allow_null=True)
+    assignments = AssignmentSerializer(many=True, read_only=True)
 
     def validate_file(self, value):
         if value and value.size > 10 * 1024 * 1024:
@@ -17,41 +23,12 @@ class LessonSerializer(serializers.ModelSerializer):
     def to_internal_value(self, data):
         data = data.copy()
 
-        # Handle empty strings from frontend for assignment_due_date (previously called due_date)
-        if 'assignment_due_date' in data and data['assignment_due_date'] in ["", "null", "undefined", None]:
-            data['assignment_due_date'] = None
-        # Support legacy frontend keys if still using "due_date"
-        elif 'due_date' in data and data['due_date'] in ["", "null", "undefined", None]:
-            data['assignment_due_date'] = None
-
-        # Ignore non-file values passed to the file field during partial updates.
-        # This prevents: "The submitted data was not a file. Check the encoding type on the form."
         from django.core.files.base import File
         raw_file = data.get('file', None)
         if raw_file is not None and not isinstance(raw_file, File):
             data.pop('file', None)
             
         return super().to_internal_value(data)
-
-    def validate(self, data):
-        file = data.get('file')
-        assignment_title = data.get('assignment_title')
-        
-        # If not in data (partial update), check instance
-        if assignment_title is None and self.instance:
-            assignment_title = getattr(self.instance, 'assignment_title', None)
-
-        # File size check is now handled by validate_file field-level validator otomatis by rest framework
-        pass
-
-        # In assignment context, or if title is present, file is mandatory
-        if self.context.get('is_assignment') or assignment_title:
-            # If no file in current update AND no file exists on instance
-            existing_file = getattr(self.instance, 'file', None)
-            if not file and not existing_file:
-                raise serializers.ValidationError({"file": "Assignment file is mandatory."})
-        
-        return data
 
     class Meta:
         model = Lesson

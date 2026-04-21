@@ -5,7 +5,8 @@ from .views import (
     AdminBlogMetaView,
     AdminBlogCategoryListCreateView,
     PublicBlogListView,
-    PublicBlogDetailView
+    PublicBlogDetailView,
+    latest_blogs
 )
 
 urlpatterns = [
@@ -21,5 +22,6 @@ urlpatterns = [
 
     # Public APIs
     path('', PublicBlogListView.as_view()),
+    path('latest-blogs/', latest_blogs, name='latest_blogs'),
     path('<slug:slug>/', PublicBlogDetailView.as_view()),
 ]

@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from .storage import AuthenticatedRawMediaCloudinaryStorage
 from cloudinary_storage.storage import RawMediaCloudinaryStorage
 
 User = settings.AUTH_USER_MODEL
@@ -96,16 +97,11 @@ class Lesson(models.Model):
     )
     title = models.CharField(max_length=255)
     content = models.TextField(blank=True)
-    file = models.FileField(upload_to="lesson_files/", null=True, blank=True, storage=RawMediaCloudinaryStorage())
+    file = models.FileField(upload_to="lesson_files/", null=True, blank=True, storage=AuthenticatedRawMediaCloudinaryStorage())
     video_url = models.URLField(blank=True, null=True)
     resource_title = models.CharField(max_length=255, blank=True)
     resource_link = models.URLField(blank=True)
     
-    # 🔥 Assignment fields merged
-    assignment_title = models.CharField(max_length=255, blank=True)
-    assignment_description = models.TextField(blank=True)
-    assignment_due_date = models.DateTimeField(null=True, blank=True)
-
     order = models.IntegerField(default=0)
 
     class Meta:
@@ -115,14 +111,33 @@ class Lesson(models.Model):
         return self.title
 
 
+class Assignment(models.Model):
+    lesson = models.ForeignKey(
+        Lesson, 
+        on_delete=models.CASCADE, 
+        related_name="assignments"
+    )
+    assignment_title = models.CharField(max_length=255)
+    assignment_description = models.TextField(blank=True)
+    assignment_due_date = models.DateTimeField(null=True, blank=True)
+    
+    file = models.FileField(upload_to="assignments/", null=True, blank=True, storage=AuthenticatedRawMediaCloudinaryStorage())
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.assignment_title} (Lesson: {self.lesson.title})"
+
+
 class Submission(models.Model):
     STATUS_CHOICES = (
         ("submitted", "Submitted"),
         ("graded", "Graded"),
     )
 
-    lesson = models.ForeignKey(
-        Lesson,
+    assignment = models.ForeignKey(
+        Assignment,
         on_delete=models.CASCADE,
         related_name="submissions",
         null=True,
@@ -134,7 +149,7 @@ class Submission(models.Model):
         related_name="course_submissions"
     )
     text_answer = models.TextField(blank=True)
-    file_upload = models.FileField(upload_to="submissions/", null=True, blank=True, storage=RawMediaCloudinaryStorage())
+    file_upload = models.FileField(upload_to="submissions/", null=True, blank=True, storage=AuthenticatedRawMediaCloudinaryStorage())
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="submitted")
     score = models.PositiveIntegerField(null=True, blank=True)
     feedback = models.TextField(blank=True)
@@ -149,11 +164,11 @@ class Submission(models.Model):
     submitted_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('lesson', 'student')
+        unique_together = ('assignment', 'student')
 
     def __str__(self):
-        lesson_title = self.lesson.title if self.lesson else "No Lesson"
-        return f"{self.student.email} - {lesson_title}"
+        assignment_title = self.assignment.title if self.assignment else "No Assignment"
+        return f"{self.student.email} - {assignment_title}"
 
 
 class Batch(models.Model):

@@ -54,7 +54,7 @@ def _database_config_from_url(database_url: str) -> dict:
         "PASSWORD": unquote(parsed.password or ""),
         "HOST": parsed.hostname or "",
         "PORT": parsed.port or 5432,
-        "CONN_MAX_AGE": 600,
+        "CONN_MAX_AGE": 0,
         "OPTIONS": {
             "sslmode": sslmode,
         },
@@ -184,7 +184,15 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
+# Modern Django Storage Configuration (Django 4.2+)
+STORAGES = {
+    "default": {
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 
 MEDIA_URL = '/media/'
@@ -200,8 +208,6 @@ CLOUDINARY_STORAGE = {
     'API_KEY': os.getenv('CLOUDINARY_API_KEY', ''),
     'API_SECRET': os.getenv('CLOUDINARY_API_SECRET', '')
 }
-
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
 
 # 🔥 REDIS CONFIG

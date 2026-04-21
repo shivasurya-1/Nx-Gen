@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.db.models import Q
 
 from accounts.permissions import IsStudent, IsInstructor
-from .models import Course, CourseContent, Category, Module, Lesson, Submission, Batch
+from .models import Course, CourseContent, Category, Module, Lesson, Assignment, Submission, Batch
 from .serializers import (
     CourseSerializer,
     CourseContentSerializer,
@@ -15,6 +15,7 @@ from .serializers import (
     ModuleSerializer,
     ModuleWriteSerializer,
     LessonSerializer,
+    AssignmentSerializer,
     CourseContentDisplaySerializer,
     SubmissionSerializer,
     BatchSerializer,
@@ -580,8 +581,11 @@ class SectionTypeListView(APIView):
 
 class AssignmentCreateUpdateView(APIView):
     """
-    POST /lessons/<lesson_id>/assignment/
-    Allows an instructor or admin to create/update an assignment directly on a lesson.
+    GET  /modules/<module_id>/lessons/<lesson_id>/assignment/
+    List all assignments for a lesson.
+    
+    POST /modules/<module_id>/lessons/<lesson_id>/assignment/
+    Allows an instructor or admin to create a new assignment on a lesson (max 5).
     """
     def get_permissions(self):
         if self.request.method in ["POST", "PUT", "PATCH"]:
@@ -594,39 +598,9 @@ class AssignmentCreateUpdateView(APIView):
         except Lesson.DoesNotExist:
             return Response({"error": "Lesson not found in this module"}, status=404)
 
-        if not lesson.assignment_title:
-            return Response({"error": "No assignment configured for this lesson"}, status=404)
-
-        serializer = LessonSerializer(lesson)
+        assignments = lesson.assignments.all()
+        serializer = AssignmentSerializer(assignments, many=True)
         return Response(serializer.data)
-
-    def put(self, request, module_id, lesson_id):
-        return self.post(request, module_id, lesson_id)
-        
-    def patch(self, request, module_id, lesson_id):
-        return self.post(request, module_id, lesson_id)
-
-    def delete(self, request, module_id, lesson_id):
-        try:
-            lesson = Lesson.objects.get(id=lesson_id, module_id=module_id)
-        except Lesson.DoesNotExist:
-            return Response({"error": "Lesson not found in this module"}, status=404)
-
-        permission = CanEditCourseContent()
-        if not permission.has_object_permission(request, self, lesson):
-            return Response({"error": "You don't have permission to delete assignments for this lesson"}, status=403)
-
-        # Clear assignment fields
-        lesson.assignment_title = ""
-        lesson.assignment_description = ""
-        lesson.assignment_due_date = None
-        lesson.file = None
-        lesson.save()
-
-        # 🔥 Clear all student submissions for this lesson
-        Submission.objects.filter(lesson=lesson).delete()
-
-        return Response({"message": "Assignment record deleted successfully"}, status=204)
 
     def post(self, request, module_id, lesson_id):
         try:
@@ -638,50 +612,61 @@ class AssignmentCreateUpdateView(APIView):
         if not permission.has_object_permission(request, self, lesson):
             return Response({"error": "You don't have permission to create assignments for this lesson"}, status=403)
         
-        # Merge input data
+        if lesson.assignments.count() >= 5:
+            return Response({"error": "You can only create up to 5 assignments per lesson"}, status=400)
+            
         data = request.data.copy()
+        data["lesson"] = lesson.id
 
-        was_assignment = bool(lesson.assignment_title)
-        serializer = LessonSerializer(lesson, data=data, partial=True, context={'is_assignment': True})
+        serializer = AssignmentSerializer(data=data)
         if serializer.is_valid():
             serializer.save()
-            # If this is a fresh assignment creation on a previously non-assignment lesson,
-            # clear any legacy submissions that might exist from previous assignment iterations.
-            if not was_assignment:
-                Submission.objects.filter(lesson=lesson).delete()
-            return Response(serializer.data, status=200)
+            return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
 
 
 class AssignmentSubmitView(APIView):
     """
-    POST /lessons/<lesson_id>/assignment/<assignment_id>/submit/
-    (assignment_id is kept for URL compatibility — redirects to lesson_id)
+    POST /assignments/<assignment_id>/submit/
     Student submits their assignment answer.
     """
     permission_classes = [AllowAny] # Checked manually for enrollment below
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
-    def post(self, request, module_id, lesson_id, assignment_id=None):
-        from .models import Lesson, Submission
+    def post(self, request, assignment_id=None, module_id=None, lesson_id=None):
+        from .models import Assignment, Submission
         from enrollments.models import Enrollment
 
         if not request.user.is_authenticated or request.user.role != 'student':
             return Response({"error": "Only enrolled students can submit assignments."}, status=403)
 
+        # Handle 'undefined' from frontend
+        if module_id == 'undefined': module_id = None
+        if lesson_id == 'undefined': lesson_id = None
+        if assignment_id == 'undefined': assignment_id = None
+
         try:
-            lesson = Lesson.objects.filter(id=lesson_id, module_id=module_id).exclude(assignment_title="").first()
-            if not lesson: raise Lesson.DoesNotExist
-        except Lesson.DoesNotExist:
-            return Response({"error": "Lesson assignment not found in this module"}, status=404)
+            if assignment_id:
+                assignment = Assignment.objects.get(id=assignment_id)
+            else:
+                # Try finding by lesson_id
+                assignment = Assignment.objects.filter(lesson_id=lesson_id).first()
+                if not assignment and lesson_id:
+                    # HEURISTIC: If lesson_id 11 is passed but is actually an assignment ID
+                    assignment = Assignment.objects.filter(id=lesson_id).first()
+                
+                if not assignment:
+                    return Response({"error": "No assignment found for lesson/id provided"}, status=404)
+        except (Assignment.DoesNotExist, ValueError):
+            return Response({"error": "Assignment not found"}, status=404)
 
         # Check enrollment via course
-        course = lesson.module.course
+        course = assignment.lesson.module.course
         if not Enrollment.objects.filter(email=request.user.email, course=course, status='approved').exists():
             return Response({"error": "You are not enrolled in this course."}, status=403)
 
         # If this lesson is instructor-specific, only students from that instructor's active batches can submit.
-        lesson_instructor = lesson.module.created_by
+        lesson_instructor = assignment.lesson.module.created_by
         if lesson_instructor:
             is_student_in_batch = Batch.objects.filter(
                 course=course,
@@ -693,11 +678,11 @@ class AssignmentSubmitView(APIView):
                 return Response({"error": "This assignment is not assigned to your batch."}, status=403)
 
         # Check if already submitted
-        submission = Submission.objects.filter(lesson=lesson, student=request.user).first()
+        submission = Submission.objects.filter(assignment=assignment, student=request.user).first()
         
         # Only allow answer payload from students.
         data = {
-            'lesson': lesson.id,
+            'assignment': assignment.id,
             'student': request.user.id,
             'status': 'submitted',
             'text_answer': request.data.get('text_answer', ''),
@@ -724,26 +709,40 @@ class AssignmentSubmitView(APIView):
 
 class AssignmentStatusView(APIView):
     """
-    GET /lessons/<lesson_id>/assignment/<assignment_id>/status/
-    Returns a unified list of enrolled students along with their submission status for a specific lesson's assignment.
+    GET /assignments/<assignment_id>/status/
+    Returns a unified list of enrolled students along with their submission status for a specific assignment.
     """
     def get_permissions(self):
         return [IsAssignedInstructorOrAdmin()]
 
-    def get(self, request, module_id, lesson_id, assignment_id=None):
-        from .models import Lesson, Submission
+    def get(self, request, assignment_id=None, module_id=None, lesson_id=None):
+        from .models import Assignment, Submission
         from enrollments.models import Enrollment
         from django.contrib.auth import get_user_model
+
+        # Handle 'undefined' from frontend
+        if module_id == 'undefined': module_id = None
+        if lesson_id == 'undefined': lesson_id = None
+        if assignment_id == 'undefined': assignment_id = None
 
         User = get_user_model()
 
         try:
-            lesson = Lesson.objects.filter(id=lesson_id, module_id=module_id).exclude(assignment_title="").first()
-            if not lesson: raise Lesson.DoesNotExist
-        except Lesson.DoesNotExist:
-            return Response({"error": "Lesson assignment not found in this module"}, status=404)
+            if assignment_id:
+                assignment = Assignment.objects.get(id=assignment_id)
+            else:
+                # Try finding by lesson_id
+                assignment = Assignment.objects.filter(lesson_id=lesson_id).first()
+                if not assignment and lesson_id:
+                    # HEURISTIC: If lesson_id 11 is passed but is actually an assignment ID
+                    assignment = Assignment.objects.filter(id=lesson_id).first()
+                
+                if not assignment:
+                    return Response({"error": "No assignment found for lesson/id provided"}, status=404)
+        except (Assignment.DoesNotExist, ValueError):
+            return Response({"error": "Assignment not found"}, status=404)
 
-        course = lesson.module.course
+        course = assignment.lesson.module.course
         
         # Verify permissions 
         permission = IsAssignedInstructorOrAdmin()
@@ -751,8 +750,6 @@ class AssignmentStatusView(APIView):
             return Response({"error": "You don't have permission to view status for this assignment"}, status=403)
 
         # Build student scope.
-        # - Admin: all approved enrollments in this course.
-        # - Instructor: only students in instructor's active batches for this course.
         if request.user.is_superuser:
             approved_emails = Enrollment.objects.filter(course=course, status='approved').values_list('email', flat=True)
             enrolled_users = User.objects.filter(email__in=approved_emails).prefetch_related('enrolled_batches')
@@ -768,8 +765,8 @@ class AssignmentStatusView(APIView):
         else:
             enrolled_users = User.objects.none()
 
-        # Get all submissions for this lesson
-        submissions = Submission.objects.filter(lesson=lesson)
+        # Get all submissions for this specific assignment
+        submissions = Submission.objects.filter(assignment=assignment)
         submission_map = {sub.student_id: sub for sub in submissions}
 
         # Build response
@@ -777,7 +774,6 @@ class AssignmentStatusView(APIView):
         for user in enrolled_users:
             sub = submission_map.get(user.id)
             
-            # Find batch for this student in this course
             if request.user.is_superuser:
                 batch = user.enrolled_batches.filter(course=course, is_active=True).first()
             elif hasattr(request.user, 'instructor'):
@@ -839,16 +835,14 @@ class AssignmentGradeView(APIView):
         except Lesson.DoesNotExist:
             return Response({"error": "Lesson not found in this module"}, status=404)
 
-        if not lesson.assignment_title:
-            return Response({"error": "No assignment configured for this lesson"}, status=404)
-
         course = lesson.module.course
         permission = IsAssignedInstructorOrAdmin()
         if not permission.has_object_permission(request, self, course):
             return Response({"error": "You don't have permission to grade this assignment"}, status=403)
 
         try:
-            submission = Submission.objects.get(id=submission_id, lesson=lesson)
+            # Filter by lesson indirectly via assignment
+            submission = Submission.objects.get(id=submission_id, assignment__lesson=lesson)
         except Submission.DoesNotExist:
             return Response({"error": "Submission not found for this assignment"}, status=404)
 
@@ -888,7 +882,7 @@ class InstructorStudentDetailView(APIView):
     def get(self, request, student_id):
         from django.contrib.auth import get_user_model
         from enrollments.models import Enrollment
-        from .models import Lesson, Submission
+        from .models import Assignment, Submission
         
         User = get_user_model()
         try:
@@ -907,20 +901,20 @@ class InstructorStudentDetailView(APIView):
 
         enrolled_course_ids = enrollment_qs.values_list('course_id', flat=True)
 
-        lessons = Lesson.objects.filter(
-            module__course__id__in=enrolled_course_ids
-        ).exclude(assignment_title="").select_related('module__course')
+        assignments = Assignment.objects.filter(
+            lesson__module__course__id__in=enrolled_course_ids
+        ).select_related('lesson__module__course')
 
         data = []
-        for lesson in lessons:
+        for assignment in assignments:
             submission = Submission.objects.filter(
-                lesson=lesson, student=student
+                assignment=assignment, student=student
             ).first()
             data.append({
-                "assignment": LessonSerializer(lesson).data,
+                "assignment": AssignmentSerializer(assignment).data,
                 "course": {
-                    "id": lesson.module.course.id,
-                    "title": lesson.module.course.title,
+                    "id": assignment.lesson.module.course.id,
+                    "title": assignment.lesson.module.course.title,
                 },
                 "status": submission.status if submission else "Not Submitted",
                 "submitted_at": submission.submitted_at if submission else None,
@@ -932,68 +926,60 @@ class InstructorStudentDetailView(APIView):
 
 class AssignmentDetailView(APIView):
     """
-    GET    /lessons/<lesson_id>/assignment/<pk>/  → retrieve assignment details
-    PUT    /lessons/<lesson_id>/assignment/<pk>/  → update assignment (instructor/admin)
-    DELETE /lessons/<lesson_id>/assignment/<pk>/  → delete assignment (instructor/admin)
+    GET    /assignments/<pk>/  → retrieve assignment details
+    PUT    /assignments/<pk>/  → update assignment (instructor/admin)
+    DELETE /assignments/<pk>/  → delete assignment (instructor/admin)
     """
     def get_permissions(self):
         if self.request.method in ["PUT", "PATCH", "DELETE"]:
             return [CanEditCourseContent()]
         return [AllowAny()]
 
-    def get(self, request, lesson_id, pk=None):
+    def get_object(self, pk):
         try:
-            lesson = Lesson.objects.filter(id=lesson_id).exclude(assignment_title="").first()
-            if not lesson: raise Lesson.DoesNotExist
-        except Lesson.DoesNotExist:
-            return Response({"error": "Assignment not found for this lesson"}, status=404)
-        serializer = LessonSerializer(lesson)
+            return Assignment.objects.get(pk=pk)
+        except Assignment.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        assignment = self.get_object(pk)
+        if not assignment:
+            return Response({"error": "Assignment not found"}, status=404)
+        serializer = AssignmentSerializer(assignment)
         return Response(serializer.data)
 
-    def put(self, request, lesson_id, pk=None):
-        try:
-            lesson = Lesson.objects.get(id=lesson_id)
-        except Lesson.DoesNotExist:
-            return Response({"error": "Lesson not found"}, status=404)
+    def put(self, request, pk):
+        assignment = self.get_object(pk)
+        if not assignment:
+            return Response({"error": "Assignment not found"}, status=404)
 
         permission = CanEditCourseContent()
-        if not permission.has_object_permission(request, self, lesson):
+        if not permission.has_object_permission(request, self, assignment.lesson):
             return Response({"error": "You don't have permission to edit this assignment"}, status=403)
 
-        data = request.data.copy()
-
-        was_assignment = bool(lesson.assignment_title)
-        serializer = LessonSerializer(lesson, data=data, partial=True)
+        serializer = AssignmentSerializer(assignment, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            # If this becomes a fresh assignment or title is set for the first time, clear legacy data.
-            if not was_assignment and lesson.assignment_title:
-                Submission.objects.filter(lesson=lesson).delete()
             return Response(serializer.data)
         return Response(serializer.errors, status=400)
 
-    def patch(self, request, lesson_id, pk=None):
-        return self.put(request, lesson_id, pk)
+    def patch(self, request, pk):
+        return self.put(request, pk)
 
-    def delete(self, request, lesson_id, pk=None):
-        try:
-            lesson = Lesson.objects.get(id=lesson_id)
-        except Lesson.DoesNotExist:
-            return Response({"error": "Lesson not found"}, status=404)
+    def delete(self, request, pk):
+        assignment = self.get_object(pk)
+        if not assignment:
+            return Response({"error": "Assignment not found"}, status=404)
 
         permission = CanEditCourseContent()
-        if not permission.has_object_permission(request, self, lesson):
+        if not permission.has_object_permission(request, self, assignment.lesson):
             return Response({"error": "You don't have permission to delete this assignment"}, status=403)
 
-        # Deleting assignment means clearing title on the lesson
-        lesson.assignment_title = ""
-        lesson.assignment_description = ""
-        lesson.save()
+        # 🔥 CRITICAL: Remove all student submissions for this specific assignment when deleted.
+        assignment.submissions.all().delete()
+        assignment.delete()
 
-        # 🔥 CRITICAL: Remove all student submissions for this lesson when the assignment is deleted.
-        Submission.objects.filter(lesson=lesson).delete()
-
-        return Response({"message": "Assignment removed from lesson"}, status=204)
+        return Response({"message": "Assignment deleted successfully"}, status=204)
 
 
 class StudentAssignmentListView(APIView):
@@ -1007,38 +993,27 @@ class StudentAssignmentListView(APIView):
 
     def get(self, request):
         from enrollments.models import Enrollment
+        from .models import Assignment, Submission
 
         enrolled_course_ids = Enrollment.objects.filter(
             email=request.user.email,
             status='approved'
         ).values_list('course_id', flat=True)
 
-        student_batches = Batch.objects.filter(
-            students=request.user,
-            is_active=True,
-            course_id__in=enrolled_course_ids,
-        )
-        batch_instructor_ids = list(
-            student_batches.exclude(instructor__isnull=True).values_list('instructor_id', flat=True)
-        )
-
-        lessons_qs = Lesson.objects.filter(
-            module__course__id__in=enrolled_course_ids
-        ).exclude(assignment_title="")
-
-        # Show all assignments in the student's enrolled courses.
-        lessons = lessons_qs.select_related('module__course')
+        assignments = Assignment.objects.filter(
+            lesson__module__course__id__in=enrolled_course_ids
+        ).select_related('lesson__module__course')
 
         data = []
-        for lesson in lessons:
+        for assignment in assignments:
             submission = Submission.objects.filter(
-                lesson=lesson, student=request.user
+                assignment=assignment, student=request.user
             ).first()
             data.append({
-                "assignment": LessonSerializer(lesson).data,
+                "assignment": AssignmentSerializer(assignment).data,
                 "course": {
-                    "id": lesson.module.course.id,
-                    "title": lesson.module.course.title,
+                    "id": assignment.lesson.module.course.id,
+                    "title": assignment.lesson.module.course.title,
                 },
                 "status": submission.status if submission else "Not Submitted",
                 "submitted_at": submission.submitted_at if submission else None,
@@ -1056,35 +1031,37 @@ class InstructorAssignmentListView(APIView):
         return [IsAssignedInstructorOrAdmin()]
 
     def get(self, request):
+        from .models import Assignment
         if request.user.is_superuser:
-            lessons = Lesson.objects.exclude(assignment_title="")
+            assignments = Assignment.objects.all()
         else:
             if hasattr(request.user, 'instructor'):
                 assigned_courses = request.user.instructor.assigned_courses.all()
-                lessons = Lesson.objects.filter(
-                    module__course__in=assigned_courses,
-                ).exclude(assignment_title="")
+                assignments = Assignment.objects.filter(
+                    lesson__module__course__in=assigned_courses,
+                )
             else:
-                lessons = Lesson.objects.none()
+                assignments = Assignment.objects.none()
 
-        lessons = lessons.select_related('module__course')
+        assignments = assignments.select_related('lesson__module__course')
 
         data = []
-        for lesson in lessons:
-            submission_count = Submission.objects.filter(lesson=lesson).count()
+        for assignment in assignments:
+            submission_count = Submission.objects.filter(assignment=assignment).count()
             data.append({
-                "assignment": LessonSerializer(lesson).data,
+                "assignment_id": assignment.id,
+                "assignment": AssignmentSerializer(assignment).data,
                 "course": {
-                    "id": lesson.module.course.id,
-                    "title": lesson.module.course.title,
+                    "id": assignment.lesson.module.course.id,
+                    "title": assignment.lesson.module.course.title,
                 },
                 "module": {
-                    "id": lesson.module.id,
-                    "title": lesson.module.title,
+                    "id": assignment.lesson.module.id,
+                    "title": assignment.lesson.module.title,
                 },
                 "lesson": {
-                    "id": lesson.id,
-                    "title": lesson.title,
+                    "id": assignment.lesson.id,
+                    "title": assignment.lesson.title,
                 },
                 "submissions_count": submission_count,
             })
@@ -1249,4 +1226,80 @@ class ManageLiveClassView(APIView):
             return Response({'message': 'Live class ended'})
 
         return Response({'error': 'Invalid action'}, status=400)
+
+
+from .storage import get_signed_url
+
+class FileAccessView(APIView):
+    """
+    GET /api/courses/files/access/?type=<type>&id=<id>
+    Generates a secure, signed URL for private files.
+    Types: lesson, assignment, submission
+    """
+    def get(self, request):
+        file_type = request.query_params.get('type')
+        obj_id = request.query_params.get('id')
+
+        if obj_id == 'undefined': obj_id = None
+
+        if not file_type or not obj_id:
+            return Response({"error": "Missing type or id"}, status=400)
+
+        file_field = None
+        try:
+            if file_type == 'lesson':
+                try:
+                    obj = Lesson.objects.get(id=obj_id)
+                    # Permission check
+                    permission = CanEditCourseContent()
+                    if not permission.has_object_permission(request, self, obj) and request.user.role == 'student':
+                        from enrollments.models import Enrollment
+                        if not Enrollment.objects.filter(email=request.user.email, course=obj.module.course, status='approved').exists():
+                            return Response({"error": "No permission to access this lesson file"}, status=403)
+                    file_field = obj.file
+                except (Lesson.DoesNotExist, ValueError):
+                    # Check if it's actually an assignment ID
+                    obj = Assignment.objects.filter(id=obj_id).first()
+                    if obj:
+                        permission = CanEditCourseContent()
+                        if not permission.has_object_permission(request, self, obj.lesson) and request.user.role == 'student':
+                            from enrollments.models import Enrollment
+                            if not Enrollment.objects.filter(email=request.user.email, course=obj.lesson.module.course, status='approved').exists():
+                                return Response({"error": "No permission to access this assignment file"}, status=403)
+                        file_field = obj.file
+                    else:
+                        return Response({"error": f"Lesson with ID {obj_id} not found"}, status=404)
+                
+            elif file_type == 'assignment':
+                obj = Assignment.objects.get(id=obj_id)
+                permission = CanEditCourseContent()
+                if not permission.has_object_permission(request, self, obj) and request.user.role == 'student':
+                    from enrollments.models import Enrollment
+                    if not Enrollment.objects.filter(email=request.user.email, course=obj.lesson.module.course, status='approved').exists():
+                        return Response({"error": "No permission to access this assignment file"}, status=403)
+                file_field = obj.file
+
+            elif file_type == 'submission':
+                obj = Submission.objects.get(id=obj_id)
+                # Permission check: student must be owner, or instructor/admin
+                if obj.student != request.user:
+                    permission = IsAssignedInstructorOrAdmin()
+                    if not permission.has_object_permission(request, self, obj.assignment.lesson.module.course):
+                        return Response({"error": "No permission to access this submission file"}, status=403)
+                file_field = obj.file_upload
+            else:
+                return Response({"error": "Invalid type"}, status=400)
+        except (Lesson.DoesNotExist, Assignment.DoesNotExist, Submission.DoesNotExist, ValueError):
+            return Response({"error": f"{file_type.capitalize()} with ID {obj_id} not found"}, status=404)
+
+        if not file_field:
+            return Response({"error": "No file attached"}, status=404)
+
+        # Generate signed URL
+        try:
+            public_id = file_field.name
+            signed_url = get_signed_url(public_id)
+            return Response({"signed_url": signed_url})
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
 

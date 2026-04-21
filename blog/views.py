@@ -160,6 +160,37 @@ class AdminBlogDetailView(APIView):
         return Response({"message": "Blog soft deleted"}, status=status.HTTP_200_OK)
 
 
+# ---------------- HOME PAGE APIs ---------------- #
+
+from rest_framework.decorators import api_view, permission_classes
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def latest_blogs(request):
+    """
+    Returns the latest 3 published blogs. 
+    Also triggers auto-publishing for scheduled blogs that are due.
+    """
+    from django.utils import timezone
+    now = timezone.now()
+
+    # 🔥 Auto-publish due blogs
+    Blog.objects.filter(
+        status="scheduled", 
+        publish_at__lte=now, 
+        is_deleted=False
+    ).update(status="published")
+
+    # Fetch latest 3 published blogs
+    blogs = Blog.objects.filter(
+        status='published', 
+        is_deleted=False
+    ).order_by('-publish_at')[:3]
+    
+    serializer = BlogSerializer(blogs, many=True)
+    return Response(serializer.data)
+
+
 # ---------------- PUBLIC APIs ---------------- #
 
 class PublicBlogListView(APIView):
@@ -169,11 +200,16 @@ class PublicBlogListView(APIView):
         from django.utils import timezone
         now = timezone.now()
         
-        blogs = Blog.objects.filter(
+        # 🔥 Auto-publish due blogs
+        Blog.objects.filter(
+            status="scheduled",
+            publish_at__lte=now,
             is_deleted=False
-        ).filter(
-            Q(status="published") | 
-            (Q(status="scheduled") & Q(publish_at__lte=now))
+        ).update(status="published")
+        
+        blogs = Blog.objects.filter(
+            is_deleted=False,
+            status="published"
         ).order_by("-publish_at", "-created_at")
 
         serializer = BlogSerializer(blogs, many=True)
@@ -187,14 +223,19 @@ class PublicBlogDetailView(APIView):
         from django.utils import timezone
         now = timezone.now()
         
+        # 🔥 Auto-publish this specific blog if it's due
+        Blog.objects.filter(
+            slug=slug,
+            status="scheduled",
+            publish_at__lte=now,
+            is_deleted=False
+        ).update(status="published")
+
         blog = get_object_or_404(
             Blog,
-            Q(slug=slug) &
-            Q(is_deleted=False) &
-            (
-                Q(status="published") | 
-                (Q(status="scheduled") & Q(publish_at__lte=now))
-            )
+            slug=slug,
+            is_deleted=False,
+            status="published"
         )
 
         serializer = BlogSerializer(blog)

@@ -21,6 +21,7 @@ from .views import (
     CourseCurriculumView,
     # Assignments
     AssignmentCreateUpdateView,
+    AssignmentDetailView,
     AssignmentSubmitView,
     AssignmentStatusView,
     AssignmentGradeView,
@@ -36,9 +37,12 @@ from .views import (
     ManageBatchStudentsView,
     InstructorBatchListView,
     ManageLiveClassView,
+    FileAccessView,
 )
 
 urlpatterns = [
+    # ── FILES ─────────────────────────────────────────────────────────────
+    path('files/access/', FileAccessView.as_view(), name='file-access'),
 
     # ── CATEGORY ──────────────────────────────────────────────────────────
     path('categories/', CategoryListCreateView.as_view()),
@@ -72,12 +76,20 @@ urlpatterns = [
     path('courses/<int:course_id>/curriculum/', CourseCurriculumView.as_view()),
 
     # ── ASSIGNMENTS ───────────────────────────────────────────────────────
-    # Create/update/get assignment on a lesson (instructor)
+    # Create/list assignments on a lesson (instructor)
     path('modules/<int:module_id>/lessons/<int:lesson_id>/assignment/', AssignmentCreateUpdateView.as_view()),
-    # Student submits answer
-    path('modules/<int:module_id>/lessons/<int:lesson_id>/assignment/submit/', AssignmentSubmitView.as_view()),
-    # Instructor views all student statuses for an assignment
-    path('modules/<int:module_id>/lessons/<int:lesson_id>/assignment/status/', AssignmentStatusView.as_view()),
+    
+    # Lesson-based status and submission (compatibility & convenience)
+    path('modules/<str:module_id>/lessons/<str:lesson_id>/assignment/status/', AssignmentStatusView.as_view()),
+    path('modules/<str:module_id>/lessons/<str:lesson_id>/assignment/<str:assignment_id>/status/', AssignmentStatusView.as_view()),
+    path('modules/<str:module_id>/lessons/<str:lesson_id>/assignment/submit/', AssignmentSubmitView.as_view()),
+    path('modules/<str:module_id>/lessons/<str:lesson_id>/assignment/<str:assignment_id>/submit/', AssignmentSubmitView.as_view()),
+
+    # Direct ID-based operations
+    path('assignments/<int:pk>/', AssignmentDetailView.as_view()),
+    path('assignments/<int:assignment_id>/submit/', AssignmentSubmitView.as_view()),
+    path('assignments/<int:assignment_id>/status/', AssignmentStatusView.as_view()),
+    
     # Instructor grades a specific student submission
     path('modules/<int:module_id>/lessons/<int:lesson_id>/assignment/submissions/<int:submission_id>/grade/', AssignmentGradeView.as_view()),
 

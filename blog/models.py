@@ -57,6 +57,7 @@ class Blog(models.Model):
     video = models.FileField(upload_to='blogs/videos/', blank=True, null=True, storage=VideoMediaCloudinaryStorage())
 
     content = models.TextField()
+    excerpt = models.TextField(blank=True, null=True)  # Short Description / Excerpt
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
 

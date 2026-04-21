@@ -32,6 +32,10 @@ class BlogSerializer(serializers.ModelSerializer):
     category_data = serializers.SerializerMethodField()
     tags_data = serializers.SerializerMethodField()
 
+    # ✅ UI Aliases (so DRF accepts these keys during POST/PUT)
+    publish_status = serializers.CharField(write_only=True, required=False)
+    short_description = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+
     class Meta:
         model = Blog
         fields = "__all__"
@@ -53,11 +57,24 @@ class BlogSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-
-        data["category"] = data.pop("category_data")
-        data["tags"] = data.pop("tags_data")
-
+        # Provide aliases and display names for frontend compatibility
+        data["publish_status"] = data.get("status")
+        data["status_display"] = instance.get_status_display()
+        data["short_description"] = data.get("excerpt")
         return data
+
+    def to_internal_value(self, data):
+        # Create a mutable copy if it's a QueryDict (needed for some frontend payloads)
+        if hasattr(data, "_mutable"):
+            data = data.copy()
+
+        # Map incoming frontend keys to internal backend field names
+        if "publish_status" in data:
+            data["status"] = data["publish_status"]
+        if "short_description" in data:
+            data["excerpt"] = data["short_description"]
+
+        return super().to_internal_value(data)
 
     def validate(self, data):
         from django.utils import timezone
@@ -76,6 +93,10 @@ class BlogSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        # Remove UI aliases so they don't get passed to the model
+        validated_data.pop("publish_status", None)
+        validated_data.pop("short_description", None)
+
         tags = validated_data.pop("tags", [])
         # Slug is handled by the model's save() method
         blog = Blog.objects.create(**validated_data)
@@ -83,6 +104,10 @@ class BlogSerializer(serializers.ModelSerializer):
         return blog
 
     def update(self, instance, validated_data):
+        # Remove UI aliases so they don't get passed to the model
+        validated_data.pop("publish_status", None)
+        validated_data.pop("short_description", None)
+
         tags = validated_data.pop("tags", None)
 
         for attr, value in validated_data.items():
