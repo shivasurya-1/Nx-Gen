@@ -10,7 +10,7 @@ from .views import (
 )
 
 urlpatterns = [
-
+ 
     # 🔥 Register Instructor (Admin creates instructor)
     path('register/', InstructorRegisterView.as_view(), name='instructor-register'),
 

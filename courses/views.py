@@ -20,7 +20,7 @@ from .serializers import (
     SubmissionSerializer,
     BatchSerializer,
 )
-from .permissions import IsSuperAdmin, IsAssignedInstructorOrAdmin, CanEditCourseContent, IsModuleCreator
+from .permissions import IsSuperAdmin, IsAssignedInstructorOrAdmin, CanEditCourseContent, IsModuleCreator, IsAdminOrInstructor
 
 
 # ════════════════════════════════════════════════════════════
@@ -588,7 +588,7 @@ class AssignmentCreateUpdateView(APIView):
     Allows an instructor or admin to create a new assignment on a lesson (max 5).
     """
     def get_permissions(self):
-        if self.request.method in ["POST", "PUT", "PATCH"]:
+        if self.request.method in ["POST", "PUT", "PATCH", "DELETE"]:
             return [CanEditCourseContent()]
         return [AllowAny()]
     
@@ -620,9 +620,158 @@ class AssignmentCreateUpdateView(APIView):
 
         serializer = AssignmentSerializer(data=data)
         if serializer.is_valid():
-            serializer.save()
+            assignment = serializer.save()
+            
+            # 🔥 Send Notification Email to students in the batch
+            if assignment.batch:
+                try:
+                    student_emails = list(assignment.batch.students.values_list('email', flat=True))
+                    if student_emails:
+                        from django.core.mail import send_mail
+                        from django.conf import settings
+                        
+                        due_date_str = assignment.assignment_due_date.strftime('%Y-%m-%d %H:%M') if assignment.assignment_due_date else "No due date"
+                        subject = f"New Assignment: {assignment.assignment_title}"
+                        
+                        message = f"Hello,\n\nA new assignment '{assignment.assignment_title}' has been posted for your batch '{assignment.batch.name}'.\n\n"
+                        message += f"Description: {assignment.assignment_description}\n"
+                        message += f"Due Date: {due_date_str}\n\n"
+                        message += "Please login to your dashboard to view and submit your work.\n\nBest regards,\nNexGen Team"
+                        
+                        send_mail_count = 0
+                        for email in student_emails:
+                            try:
+                                send_mail(
+                                    subject,
+                                    message,
+                                    settings.EMAIL_HOST_USER,
+                                    [email],
+                                    fail_silently=False,
+                                )
+                                send_mail_count += 1
+                            except Exception as email_err:
+                                print(f"Failed to send email to {email}: {email_err}")
+                        
+                        print(f"Successfully sent {send_mail_count} assignment notification emails.")
+                except Exception as e:
+                    print(f"Error processing assignment emails: {e}")
+
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
+
+class AssignmentListCreateView(APIView):
+    """
+    GET /api/assignments/
+    POST /api/assignments/
+    """
+    permission_classes = [IsAdminOrInstructor]
+
+    def get(self, request):
+        from accounts.models import User
+        user = request.user
+        
+        # 🔍 Extraction of Query Parameters
+        search_query = request.query_params.get('search', '')
+        instructor_id = request.query_params.get('instructor_id')
+        batch_id = request.query_params.get('batch_id')
+        course_id = request.query_params.get('course_id')
+
+        # 🔐 Base Queryset based on role
+        if user.is_superuser or getattr(user, 'role', '') == User.ADMIN:
+            assignments = Assignment.objects.all()
+        else:
+            instructor = getattr(user, 'instructor', None)
+            if not instructor:
+                return Response([], status=200)
+            assignments = Assignment.objects.filter(instructor=instructor)
+            
+        # 🛠️ Apply Filters
+        if search_query:
+            assignments = assignments.filter(assignment_title__icontains=search_query)
+        
+        if course_id:
+            assignments = assignments.filter(lesson__module__course_id=course_id)
+            
+        if instructor_id:
+            assignments = assignments.filter(instructor_id=instructor_id)
+            
+        if batch_id:
+            assignments = assignments.filter(batch_id=batch_id)
+            
+        assignments = assignments.select_related('lesson__module__course', 'batch', 'instructor')
+        serializer = AssignmentSerializer(assignments, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = AssignmentSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            assignment = serializer.save()
+            
+            # 🔥 Send Notification Email to students in the batch (logic copied from lesson-based view)
+            if assignment.batch:
+                try:
+                    student_emails = list(assignment.batch.students.values_list('email', flat=True))
+                    if student_emails:
+                        from django.core.mail import send_mail
+                        from django.conf import settings
+                        
+                        due_date_str = assignment.assignment_due_date.strftime('%Y-%m-%d %H:%M') if assignment.assignment_due_date else "No due date"
+                        subject = f"New Assignment: {assignment.assignment_title}"
+                        
+                        message = f"Hello,\n\nA new assignment '{assignment.assignment_title}' has been posted for your batch '{assignment.batch.name}'.\n\n"
+                        message += f"Description: {assignment.assignment_description}\n"
+                        message += f"Due Date: {due_date_str}\n\n"
+                        message += "Please login to your dashboard to view and submit your work.\n\nBest regards,\nNexGen Team"
+                        
+                        for email in student_emails:
+                            try:     
+                                send_mail(subject, message, settings.EMAIL_HOST_USER, [email], fail_silently=False)
+                            except: pass
+                except: pass
+
+            return Response(AssignmentSerializer(assignment).data, status=201)
+        return Response(serializer.errors, status=400)
+
+    def delete(self, request, module_id, lesson_id):
+        """
+        Deletes an assignment.
+        - Use ?delete_all=true to delete ALL assignments for this lesson.
+        - Use ?assignment_id=<id> to delete a specific one.
+        - If only one exists, it deletes it automatically without parameters.
+        """
+        assignment_id = request.query_params.get('assignment_id')
+        delete_all = request.query_params.get('delete_all')
+        assignments = Assignment.objects.filter(lesson_id=lesson_id)
+
+        # 🚀 Option to delete everything to fix stale data issues quickly
+        if delete_all == 'true':
+            count = assignments.count()
+            for a in assignments:
+                a.submissions.all().delete()
+            assignments.delete()
+            return Response({"message": f"All {count} assignments and their submissions deleted successfully"}, status=204)
+
+        if not assignment_id:
+            if assignments.count() == 1:
+                assignment = assignments.first()
+            elif assignments.count() > 1:
+                return Response({
+                    "error": "Multiple assignments found for this lesson. Please specify assignment_id OR use delete_all=true.",
+                    "available_assignments": [{"id": a.id, "title": a.assignment_title} for a in assignments]
+                }, status=400)
+            else:
+                return Response({"error": "No assignment found for this lesson"}, status=404)
+        else:
+            try:
+                assignment = assignments.get(id=assignment_id)
+            except Assignment.DoesNotExist:
+                return Response({"error": f"Assignment with ID {assignment_id} not found for this lesson"}, status=404)
+
+        # Cleanup: delete submissions first
+        assignment.submissions.all().delete()
+        assignment.delete()
+        
+        return Response({"message": "Assignment deleted successfully"}, status=204)
 
 
 class AssignmentSubmitView(APIView):
@@ -731,8 +880,8 @@ class AssignmentStatusView(APIView):
             if assignment_id:
                 assignment = Assignment.objects.get(id=assignment_id)
             else:
-                # Try finding by lesson_id
-                assignment = Assignment.objects.filter(lesson_id=lesson_id).first()
+                # Try finding by lesson_id (Get the LATEST one to avoid stale data from old assignments)
+                assignment = Assignment.objects.filter(lesson_id=lesson_id).order_by('-created_at').first()
                 if not assignment and lesson_id:
                     # HEURISTIC: If lesson_id 11 is passed but is actually an assignment ID
                     assignment = Assignment.objects.filter(id=lesson_id).first()
@@ -931,9 +1080,7 @@ class AssignmentDetailView(APIView):
     DELETE /assignments/<pk>/  → delete assignment (instructor/admin)
     """
     def get_permissions(self):
-        if self.request.method in ["PUT", "PATCH", "DELETE"]:
-            return [CanEditCourseContent()]
-        return [AllowAny()]
+        return [IsAdminOrInstructor()]
 
     def get_object(self, pk):
         try:
@@ -953,8 +1100,8 @@ class AssignmentDetailView(APIView):
         if not assignment:
             return Response({"error": "Assignment not found"}, status=404)
 
-        permission = CanEditCourseContent()
-        if not permission.has_object_permission(request, self, assignment.lesson):
+        permission = IsAdminOrInstructor()
+        if not permission.has_object_permission(request, self, assignment):
             return Response({"error": "You don't have permission to edit this assignment"}, status=403)
 
         serializer = AssignmentSerializer(assignment, data=request.data, partial=True)
@@ -971,8 +1118,8 @@ class AssignmentDetailView(APIView):
         if not assignment:
             return Response({"error": "Assignment not found"}, status=404)
 
-        permission = CanEditCourseContent()
-        if not permission.has_object_permission(request, self, assignment.lesson):
+        permission = IsAdminOrInstructor()
+        if not permission.has_object_permission(request, self, assignment):
             return Response({"error": "You don't have permission to delete this assignment"}, status=403)
 
         # 🔥 CRITICAL: Remove all student submissions for this specific assignment when deleted.
@@ -1032,14 +1179,13 @@ class InstructorAssignmentListView(APIView):
 
     def get(self, request):
         from .models import Assignment
-        if request.user.is_superuser:
+        from accounts.models import User
+        if request.user.is_superuser or getattr(request.user, 'role', '') == User.ADMIN:
             assignments = Assignment.objects.all()
         else:
-            if hasattr(request.user, 'instructor'):
-                assigned_courses = request.user.instructor.assigned_courses.all()
-                assignments = Assignment.objects.filter(
-                    lesson__module__course__in=assigned_courses,
-                )
+            instructor = getattr(request.user, 'instructor', None)
+            if instructor:
+                assignments = Assignment.objects.filter(instructor=instructor)
             else:
                 assignments = Assignment.objects.none()
 
@@ -1084,12 +1230,17 @@ class BatchListCreateView(APIView):
 
     def get(self, request):
         batches = Batch.objects.filter(is_active=True).order_by('-created_at')
+        instructor_id = request.query_params.get('instructor_id')
+        
         if request.user.is_authenticated:
             if getattr(request.user, 'role', '') == 'instructor' and not request.user.is_superuser:
                 if hasattr(request.user, 'instructor'):
                     batches = batches.filter(instructor=request.user.instructor)
                 else:
                     batches = batches.none()
+            elif request.user.is_superuser or getattr(request.user, 'role', '') == 'admin':
+                if instructor_id:
+                    batches = batches.filter(instructor_id=instructor_id)
         else:
             batches = batches.none() # Return nothing for unauthenticated
 
@@ -1169,7 +1320,11 @@ class InstructorBatchListView(APIView):
 
     def get(self, request):
         if hasattr(request.user, 'instructor'):
-            batches = request.user.instructor.batches.filter(is_active=True).prefetch_related('students', 'course')
+            # Directly filter Batch objects by instructor to ensure fresh data
+            batches = Batch.objects.filter(
+                instructor=request.user.instructor, 
+                is_active=True
+            ).prefetch_related('students', 'course')
             
             data = []
             for batch in batches:

@@ -7,9 +7,78 @@ from .models import Category, Course, CourseContent, Module, Lesson, Assignment,
 # LESSON
 # ─────────────────────────────────────────────
 class AssignmentSerializer(serializers.ModelSerializer):
+    batch = serializers.PrimaryKeyRelatedField(
+        queryset=Batch.objects.all(),
+        required=True,
+        allow_null=False,
+        help_text="Batch is mandatory to ensure students receive notification emails."
+    )
+
     class Meta:
         model = Assignment
         fields = "__all__"
+        read_only_fields = ('instructor', 'created_by', 'updated_by')
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        if not request:
+            return attrs
+            
+        user = request.user
+        batch = attrs.get('batch')
+
+        # ⚠️ Prevent assignment creation if batch.instructor is NULL
+        if batch and not batch.instructor:
+            raise serializers.ValidationError({
+                "batch": "Cannot create assignment. This batch has no instructor assigned."
+            })
+
+        # 🔐 Role-based instructor assignment logic
+        from accounts.models import User
+        
+        # Check if user is Admin (role constant or superuser)
+        is_admin = getattr(user, 'role', '') == User.ADMIN or user.is_superuser
+        is_instructor = getattr(user, 'role', '') == User.INSTRUCTOR
+
+        if is_admin:
+            # Admin Flow: assignment.instructor = batch.instructor
+            attrs['instructor'] = batch.instructor
+            # If instructor was manually sent, it's ignored/overridden because 'instructor' is in read_only_fields
+            # but we explicitly set it in attrs here.
+        elif is_instructor:
+            if not hasattr(user, 'instructor'):
+                raise serializers.ValidationError("Instructor profile not found for this user.")
+            
+            # ⚠️ Instructor cannot assign different instructor manually
+            # System sets field automatically:
+            attrs['instructor'] = user.instructor
+            
+            # ⚠️ Instructor cannot access other instructors' assignments / batches
+            if batch.instructor != user.instructor:
+                raise serializers.ValidationError({
+                    "batch": "You can only assign assignments to your own batches."
+                })
+        
+        return attrs
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        validated_data['created_by'] = user
+        validated_data['updated_by'] = user
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        user = self.context['request'].user
+        validated_data['updated_by'] = user
+        
+        # 🔄 Assignment Update Logic: If batch is changed by Admin, update instructor
+        from accounts.models import User
+        is_admin = getattr(user, 'role', '') == User.ADMIN or user.is_superuser
+        
+        if is_admin and 'batch' in validated_data:
+            validated_data['instructor'] = validated_data['batch'].instructor
+            
+        return super().update(instance, validated_data)
 
 
 class LessonSerializer(serializers.ModelSerializer):

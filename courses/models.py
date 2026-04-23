@@ -117,12 +117,42 @@ class Assignment(models.Model):
         on_delete=models.CASCADE, 
         related_name="assignments"
     )
+    batch = models.ForeignKey(
+        'Batch',
+        on_delete=models.CASCADE,  # Changed to CASCADE to be stricter
+        related_name="batch_assignments"
+    )
     assignment_title = models.CharField(max_length=255)
     assignment_description = models.TextField(blank=True)
     assignment_due_date = models.DateTimeField(null=True, blank=True)
     
     file = models.FileField(upload_to="assignments/", null=True, blank=True, storage=AuthenticatedRawMediaCloudinaryStorage())
+
+    instructor = models.ForeignKey(
+        'instructors.Instructor',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="instructor_assignments",
+        db_index=True
+    )
     
+    # Audit fields
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_assignments"
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_assignments"
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

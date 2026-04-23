@@ -111,3 +111,30 @@ class IsModuleCreator(BasePermission):
             return obj.created_by == request.user.instructor
 
         return False
+class IsAdminOrInstructor(BasePermission):
+    """
+    Allow access only if: user.role is ADMIN or INSTRUCTOR
+    """
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        from accounts.models import User
+        # Check for ADMIN (constant or superuser) or INSTRUCTOR
+        is_admin = getattr(request.user, 'role', '') == User.ADMIN or request.user.is_superuser
+        is_instructor = getattr(request.user, 'role', '') == User.INSTRUCTOR
+        
+        return is_admin or is_instructor
+
+    def has_object_permission(self, request, view, obj):
+        # Admins can access everything
+        from accounts.models import User
+        if request.user.is_superuser or getattr(request.user, 'role', '') == User.ADMIN:
+            return True
+            
+        # Instructors can only access their own assignments
+        if getattr(request.user, 'role', '') == User.INSTRUCTOR:
+            if hasattr(obj, 'instructor'):
+                return obj.instructor == getattr(request.user, 'instructor', None)
+        
+        return False

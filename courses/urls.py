@@ -21,6 +21,7 @@ from .views import (
     CourseCurriculumView,
     # Assignments
     AssignmentCreateUpdateView,
+    AssignmentListCreateView,
     AssignmentDetailView,
     AssignmentSubmitView,
     AssignmentStatusView,
@@ -76,6 +77,7 @@ urlpatterns = [
     path('courses/<int:course_id>/curriculum/', CourseCurriculumView.as_view()),
 
     # ── ASSIGNMENTS ───────────────────────────────────────────────────────
+    path('assignments/', AssignmentListCreateView.as_view()),
     # Create/list assignments on a lesson (instructor)
     path('modules/<int:module_id>/lessons/<int:lesson_id>/assignment/', AssignmentCreateUpdateView.as_view()),
     

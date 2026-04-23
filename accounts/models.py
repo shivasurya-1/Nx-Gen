@@ -4,10 +4,16 @@ import uuid
 from django.utils import timezone
 
 class User(AbstractUser):
+    STUDENT = 'student'
+    INSTRUCTOR = 'instructor'
+    ADMIN = 'admin'
+    BLOG_ADMIN = 'blog_admin'
+
     ROLE_CHOICES = (
-        ('student', 'Student'),
-        ('instructor', 'Instructor'),
-        ('blog_admin', 'Blog Admin'),
+        (STUDENT, 'Student'),
+        (INSTRUCTOR, 'Instructor'),
+        (ADMIN, 'Admin'),
+        (BLOG_ADMIN, 'Blog Admin'),
     )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     email = models.EmailField(unique=True,blank=False,null=False)
