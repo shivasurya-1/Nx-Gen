@@ -602,7 +602,86 @@ class AssignmentCreateUpdateView(APIView):
         serializer = AssignmentSerializer(assignments, many=True)
         return Response(serializer.data)
 
+    def delete(self, request, module_id, lesson_id):
+        try:
+            lesson = Lesson.objects.get(id=lesson_id, module_id=module_id)
+        except Lesson.DoesNotExist:
+            return Response({"error": "Lesson not found in this module"}, status=404)
+
+        permission = CanEditCourseContent()
+        if not permission.has_object_permission(request, self, lesson):
+            return Response({"error": "You don't have permission to delete assignments for this lesson"}, status=403)
+        
+        # Determine if a specific assignment_id was sent in query params
+        assignment_id = request.query_params.get('assignment_id')
+        if assignment_id:
+            try:
+                assignment = lesson.assignments.get(id=assignment_id)
+                assignment.delete()
+                return Response({"message": "Assignment deleted successfully"}, status=204)
+            except Assignment.DoesNotExist:
+                return Response({"error": "Assignment not found"}, status=404)
+        else:
+            # Delete all assignments for this lesson
+            lesson.assignments.all().delete()
+            return Response({"message": "All assignments for this lesson deleted"}, status=204)
+
     def post(self, request, module_id, lesson_id):
+        try:
+            lesson = Lesson.objects.get(id=lesson_id, module_id=module_id)
+        except Lesson.DoesNotExist:
+            return Response({"error": "Lesson not found in this module"}, status=404)
+
+        permission = CanEditCourseContent()
+        if not permission.has_object_permission(request, self, lesson):
+            return Response({"error": "You don't have permission to create assignments for this lesson"}, status=403)
+        
+        if lesson.assignments.count() >= 5:
+            return Response({"error": "You can only create up to 5 assignments per lesson"}, status=400)
+            
+        data = request.data.copy()
+        data["lesson"] = lesson.id
+
+        serializer = AssignmentSerializer(data=data, context={'request': request})
+        if serializer.is_valid():
+            assignment = serializer.save()
+            
+            # 🔥 Send Notification Email to students in the batch
+            if assignment.batch:
+                try:
+                    student_emails = list(assignment.batch.students.values_list('email', flat=True))
+                    if student_emails:
+                        from django.core.mail import send_mail
+                        from django.conf import settings
+                        
+                        due_date_str = assignment.assignment_due_date.strftime('%Y-%m-%d %H:%M') if assignment.assignment_due_date else "No due date"
+                        subject = f"New Assignment: {assignment.assignment_title}"
+                        
+                        message = f"Hello,\n\nA new assignment '{assignment.assignment_title}' has been posted for your batch '{assignment.batch.name}'.\n\n"
+                        message += f"Description: {assignment.assignment_description}\n"
+                        message += f"Due Date: {due_date_str}\n\n"
+                        message += "Please login to your dashboard to view and submit your work.\n\nBest regards,\nNexGen Team"
+                        
+                        send_mail_count = 0
+                        for email in student_emails:
+                            try:
+                                send_mail(
+                                    subject,
+                                    message,
+                                    settings.EMAIL_HOST_USER,
+                                    [email],
+                                    fail_silently=False,
+                                )
+                                send_mail_count += 1
+                            except Exception as email_err:
+                                print(f"Failed to send email to {email}: {email_err}")
+                        
+                        print(f"Successfully sent {send_mail_count} assignment notification emails.")
+                except Exception as e:
+                    print(f"Error processing assignment emails: {e}")
+
+            return Response(serializer.data, status=201)
+        return Response(serializer.errors, status=400)
         try:
             lesson = Lesson.objects.get(id=lesson_id, module_id=module_id)
         except Lesson.DoesNotExist:
