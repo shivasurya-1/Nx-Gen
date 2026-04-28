@@ -193,6 +193,8 @@ STORAGES = {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
 }
+# Backward compatibility for cloudinary_storage's legacy collectstatic command.
+STATICFILES_STORAGE = STORAGES["staticfiles"]["BACKEND"]
 
 
 MEDIA_URL = '/media/'
